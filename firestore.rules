@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Der Küchen-Code ist das Geheimnis: Wer ihn kennt, kommt rein.
+    // "list" ist bewusst nicht erlaubt, damit niemand Küchen auflisten kann.
+    match /households/{code} {
+      allow get, create, update: if request.auth != null && code.size() == 16;
+
+      match /{col}/{id} {
+        allow read, write: if request.auth != null
+          && col in ['dishes', 'cooked', 'wishes']
+          && exists(/databases/$(database)/documents/households/$(code));
+      }
+    }
+  }
+}
