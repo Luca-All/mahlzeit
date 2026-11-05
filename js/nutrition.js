@@ -137,6 +137,17 @@ export const dishIngredients = (dish) => (dish.ingredients ?? guessAll(dishText(
 export const conflictingIngredients = (dish) => (dish.ingredients ?? guessAll(dishText(dish))).filter((id) => !isActive(id));
 export const guessForDish = (dish) => guessIngredients(dishText(dish));
 
+export const isActiveIngredient = (id) => isActive(id);
+
+// Was man gern zwischendurch isst. Für den Schnell-Eintrag, ohne dafür ein Gericht anzulegen.
+export const QUICK_ITEMS = [
+  'zitrus', 'kiwi', 'beeren', 'obst', 'paprika', 'gemuese', 'haferflocken', 'vollkornbrot', 'weizenkeime',
+  'walnuesse', 'kuerbiskerne', 'sonnenblumenkerne', 'leinsamen', 'chia', 'hanfsamen', 'edamame', 'tofu',
+  'joghurt', 'milch', 'kaese', 'eier', 'pflanzenjoghurt', 'pflanzendrink', 'hefeflocken',
+];
+
+export const nutrientsOf = (ids) => [...new Set(ids.flatMap((id) => BY_ID.get(id)?.nutrients ?? []))];
+
 export function groupsOf(ids) {
   const present = new Set(ids.map((id) => BY_ID.get(id)?.group));
   return GROUPS.filter((g) => present.has(g.id));
@@ -144,7 +155,7 @@ export function groupsOf(ids) {
 
 // dates: die Kalendertage des Zeitraums. Einträge zu gelöschten Gerichten werden über ihren
 // gespeicherten Namen eingeschätzt, damit der Rückblick stimmt.
-export function summarize(cooked, dishes, dates) {
+export function summarize(cooked, dishes, dates, quick = []) {
   const inRange = new Set(dates);
   const groupDays = new Map(GROUPS.map((g) => [g.id, new Set()]));
   const nutrients = new Set();
@@ -158,6 +169,15 @@ export function summarize(cooked, dishes, dates) {
       const item = BY_ID.get(id);
       if (!item) continue;
       groupDays.get(item.group).add(c.date);
+      item.nutrients.forEach((n) => nutrients.add(n));
+    }
+  }
+  for (const q of quick) {
+    if (!inRange.has(q.date)) continue;
+    for (const id of q.items.filter(isActive)) {
+      const item = BY_ID.get(id);
+      if (!item) continue;
+      groupDays.get(item.group).add(q.date);
       item.nutrients.forEach((n) => nutrients.add(n));
     }
   }

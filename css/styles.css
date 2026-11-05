@@ -761,6 +761,135 @@ legend { padding: 0; margin-bottom: 6px; }
 .link-row input { flex: 1; min-width: 0; }
 .link-row .icon-btn { flex: none; font-size: 22px; }
 
+/* ---------- Schnell-Eintrag und Fokus ---------- */
+
+.quick-card, .focus-card, .suggest-cta {
+  width: 100%;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.quick-card { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border: 0; text-align: left; }
+.quick-card small { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.quick-card > .icon { width: 19px; height: 19px; color: var(--muted); }
+.quick-group h3 { margin: 12px 0 6px !important; font-size: 14px !important; }
+
+.focus-card { margin-bottom: 18px; padding: 10px 14px 14px; }
+.focus-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.focus-head h3 { font-size: 15px; font-weight: 650; color: var(--muted); }
+.focus-list { display: flex; flex-direction: column; gap: 10px; }
+.focus-list small { color: var(--muted); font-size: 13px; }
+.focus-empty, .badges-btn { display: block; width: 100%; margin-bottom: 18px; }
+.badges-btn { margin-top: 8px; }
+.focus-settings li { padding: 10px 0; border-top: 1px solid var(--line); }
+.focus-settings b { display: block; margin-bottom: 6px; font-weight: 600; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tag { padding: 2px 8px; border-radius: 10px; background: var(--sunken); color: var(--muted); font-size: 12px; font-weight: 600; }
+.tag.focus { color: var(--accent); }
+.nutrients li.focus { border-width: 2px; }
+.nutrients li.supplement { background: var(--sunken); }
+.season-list li { background: var(--card); }
+
+/* ---------- Vorschlag ---------- */
+
+.suggest-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--accent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) var(--tint), var(--card)), var(--card) 70%);
+  color: var(--ink);
+  font-weight: 650;
+}
+.suggestion { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 16px; text-align: center; }
+#sheet .suggestion h2 { margin: 0; }
+.suggest-emoji { font-size: 64px; line-height: 1.15; animation: dice-roll 0.45s ease-out; }
+@keyframes dice-roll { from { transform: rotate(-200deg) scale(0.3); opacity: 0; } }
+.reasons { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; color: var(--muted); font-size: 15px; }
+.btn .icon { width: 19px; height: 19px; vertical-align: -4px; }
+
+/* ---------- Wochenplan ---------- */
+
+.week-title { font-size: 16px !important; text-align: center; }
+.week { display: flex; flex-direction: column; gap: 10px; }
+.week-day { padding: 8px 10px 10px; border-radius: var(--radius); background: color-mix(in srgb, var(--sunken) 55%, transparent); }
+.week-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.week-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; }
+.week-head h3 { font-size: 15px; font-weight: 650; }
+.week-actions { display: flex; margin-right: -8px; }
+.week-actions .btn { padding-inline: 8px; color: var(--accent); }
+.week-day .list { margin-top: 4px; }
+.entry .btn.small { flex: none; padding-inline: 6px; font-size: 14px; }
+.recap-btn { display: block; width: 100%; margin-bottom: 14px; }
+.day-plan { display: block; width: 100%; margin-top: 10px; }
+
+/* ---------- Goldene Wünsche ---------- */
+
+.wish-balance { margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+.wish-balance b { color: var(--ink); }
+.wish.golden { border-top-color: #D9A400; box-shadow: inset 0 0 0 1.5px #D9A400; }
+.pill.golden { background: #F5E2A0; color: #6B4F00; }
+.golden-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1.5px #D9A400;
+}
+.golden-option.locked { box-shadow: inset 0 0 0 1px var(--line); opacity: 0.75; }
+.golden-option input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: #D9A400; }
+.golden-option small { color: var(--muted); font-size: 13px; }
+.golden-option b { font-weight: 600; }
+.whatsapp { text-decoration: none; display: block; color: inherit; }
+.wish-actions a.btn { line-height: 26px; }
+.btn.primary.whatsapp { color: var(--on-accent); }
+
+/* ---------- Abzeichen und Rückblick ---------- */
+
+.points-actions { margin-bottom: 12px; }
+.badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.badge-grid li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--sunken) 55%, transparent);
+  color: var(--muted);
+}
+.badge-grid li.earned { background: var(--card); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--ink); }
+.badge-emoji { font-size: 30px; line-height: 1.2; }
+.badge-grid b { font-size: 15px; font-weight: 650; }
+.badge-grid small { color: var(--muted); font-size: 12.5px; }
+.badge-state { margin-top: auto; padding-top: 4px; font-weight: 600; }
+.badge-grid li.earned .badge-state { color: var(--accent); }
+
+.recap { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+#sheet .recap h2 { margin: 0; font-size: 28px; }
+.recap-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) var(--tint), var(--card)), var(--card) 70%);
+}
+.recap-hero > span { font-size: 46px; line-height: 1; }
+.recap-hero div { display: flex; flex-direction: column; min-width: 0; }
+.recap-hero b { font-size: 19px; font-weight: 700; overflow-wrap: anywhere; }
+.recap-hero small { color: var(--muted); font-size: 13px; }
+.recap-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 0; }
+.recap-stats div { padding: 10px 12px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--edge); }
+.recap-stats dd { margin: 0; font-size: 22px; font-weight: 700; }
+.recap-stats dt { color: var(--muted); font-size: 13px; }
+
 /* ---------- Hinweis-Toast ---------- */
 
 #toast {
@@ -795,6 +924,7 @@ legend { padding: 0; margin-bottom: 6px; }
 
 @media (prefers-reduced-motion: reduce) {
   #sheet[open] { animation: none; }
+  .suggest-emoji { animation: none; }
   #toast { transition: none; }
   .confetti { display: none; }
   .level-up-emoji { animation: none; }

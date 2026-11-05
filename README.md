@@ -24,7 +24,15 @@ Solange `firebaseConfig` in `js/config.js` auf `null` steht, läuft die App im D
 
 ## Einstellungen
 
-Die Ernährungsweise (`diet` im Küchen-Dokument) gilt für die ganze Küche und blendet in `js/nutrition.js` Bereiche aus, die dann auch keine Punkte mehr geben. Die Darstellung (Automatisch, Hell, Dunkel) gilt pro Gerät und liegt im `localStorage`.
+Die Ernährungsweise (`diet` im Küchen-Dokument) gilt für die ganze Küche und blendet in `js/nutrition.js` Bereiche aus, die dann auch keine Punkte mehr geben. Die Darstellung (Auto, Hell, Dunkel) gilt pro Gerät und liegt im `localStorage`.
+
+## Planen, Vorschläge und Fokus
+
+- `plans` und `quick` sind eigene Sammlungen für den Wochenplan und den Schnell-Eintrag (pro Person und Tag). `firestore.rules` muss sie erlauben, nach einem Update die Regeln also neu veröffentlichen.
+- `js/suggest.js` bewertet Gerichte für „Was kochen wir heute?“. `js/season.js` enthält den Saisonkalender (Quelle: regional-saisonal.de).
+- `js/badges.js` und `js/recap.js` berechnen Abzeichen und Monatsrückblick aus den Einträgen.
+- Goldene Wünsche werden am Wunsch vermerkt. Das Guthaben ist der eigene Anteil an den Löffeln abzüglich dieser Wünsche.
+- Fokus-Nährstoffe und Präparate liegen pro Gerät im `localStorage` und werden nicht synchronisiert.
 
 ## Lokal starten
 
@@ -41,6 +49,7 @@ Liegt der Ordner in iCloud Drive, kann Python ihn eventuell nicht lesen. Dann de
 - `js/util.js`: Datum, Escaping, Emoji-Vorschläge
 - `js/nutrition.js`: Zutatenkatalog, Annahmen und Auswertung
 - `js/points.js`: Löffel, Wochenziele und Level
+- `js/badges.js`, `js/recap.js`, `js/season.js`, `js/suggest.js`: Abzeichen, Rückblick, Saison, Vorschlag
 - `sw.js`: Offline-Cache für die App-Dateien
 - `firestore.rules`: Zugriffsregeln
 

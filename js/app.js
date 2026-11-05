@@ -1,14 +1,20 @@
-import { createStore, newCode, newId, normalizeCode, formatCode } from './store.js';
+import {
+  DATA_SOURCES, createStore, newCode, newId, normalizeCode, formatCode,
+} from './store.js';
 import {
   esc, toISO, fromISO, today, addDays, parseRecipeUrl, describeRecipeUrl, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
 } from './util.js';
 import {
-  DIETS, GROUPS, NUTRIENTS, TIPS, activeCombos, activeGroups, conflictingIngredients, coreGroups, currentDiet,
-  dishIngredients, groupsOf, guessForDish, guessIngredients, ingredient, ingredientsOfGroup, isAssumed, setDiet, summarize,
+  DIETS, GROUPS, NUTRIENTS, QUICK_ITEMS, TIPS, activeCombos, activeGroups, conflictingIngredients, coreGroups, currentDiet,
+  dishIngredients, groupsOf, guessForDish, guessIngredients, ingredient, ingredientsOfGroup, isActiveIngredient, isAssumed,
+  nutrientsOf, setDiet, summarize,
 } from './nutrition.js';
 import {
-  BONUS, GROUP_RULES, LEVELS, SOURCES, USAGE_RULES, computePoints,
+  BONUS, GOLDEN_WISH_COST, GROUP_RULES, LEVELS, SOURCES, USAGE_RULES, computePoints, weekStart, wishBalance,
 } from './points.js';
+import { computeRecap } from './recap.js';
+import { SEASON_SOURCE, inSeason, seasonalIngredients } from './season.js';
+import { rankDishes } from './suggest.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -22,14 +28,19 @@ const S = {
   dishes: [],
   cooked: [],
   wishes: [],
+  plans: [],
+  quick: [],
   tab: 'dishes',
   shownTab: null,
   search: '',
   sort: 'recent',
   month: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   day: today(),
+  calView: 'month',
+  calWeek: weekStart(today()),
   wishTab: 'in',
   points: null,
+  suggestion: null,
 };
 let store = null;
 let unsubscribe = null;
@@ -48,6 +59,46 @@ const findDishByName = (name) => S.dishes.find((d) => sameName(d.name, name));
 const dishLinks = (d) => (d?.links ?? (d?.link ? [d.link] : [])).map(parseRecipeUrl).filter(Boolean);
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+// Fokus-Nährstoffe sind persönlich und bleiben auf diesem Gerät.
+const focusKey = () => `mahlzeit.focus.${S.code}.${S.meId}`;
+function loadFocus() {
+  try {
+    return JSON.parse(localStorage.getItem(focusKey())) ?? {};
+  } catch {
+    return {};
+  }
+}
+const focusNutrients = () => Object.entries(loadFocus()).filter(([, v]) => v === 'focus').map(([n]) => n);
+const supplementedNutrients = () => Object.entries(loadFocus()).filter(([, v]) => v === 'supplement').map(([n]) => n);
+
+function selectDay(date) {
+  S.day = date;
+  S.month = new Date(fromISO(date).getFullYear(), fromISO(date).getMonth(), 1);
+  S.calWeek = weekStart(date);
+}
+
+// Legt das Gericht an, falls es den Namen noch nicht gibt.
+function resolveDish(name, emoji, ops) {
+  const known = findDishByName(name);
+  if (known) return known;
+  const dish = {
+    id: newId(), name, emoji: emoji ?? guessEmoji(name), note: '', links: [], createdBy: S.meId, createdAt: Date.now(),
+  };
+  const { id, ...data } = dish;
+  ops.push({ type: 'set', col: 'dishes', id, data });
+  return dish;
+}
+
+function whoField(who, legend) {
+  const friendId = otherId();
+  const option = (id, label) => `
+    <label class="${personClass(id)}"><input type="radio" name="by" value="${esc(id)}" ${who === id ? 'checked' : ''}><span>${esc(label)}</span></label>`;
+  return `<fieldset class="segmented"><legend>${esc(legend)}</legend>
+    ${option(S.meId, me().name)}
+    ${friendId ? option(friendId, other().name) + option('both', 'Zusammen') : ''}
+  </fieldset>`;
+}
 
 function dishStats() {
   const stats = new Map();
@@ -86,6 +137,7 @@ const ICONS = {
   calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4m8-4v4"/>',
   wishes: '<path d="M12 20.5s-8-4.8-8-10.8A4.7 4.7 0 0 1 12 6.6a4.7 4.7 0 0 1 8 3.1c0 6-8 10.8-8 10.8Z"/>',
   nutrition: '<path d="M5 19c0-8 5-14 15-15 0 11-5 16-13 15"/><path d="M5 21c1-6 4-9 9-11"/>',
+  dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r=".6"/><circle cx="15" cy="15" r=".6"/><circle cx="15" cy="9" r=".6"/><circle cx="9" cy="15" r=".6"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5m0 13V21m9-9h-2.5m-13 0H3m15.4-6.4-1.8 1.8M7.4 16.6l-1.8 1.8m12.8 0-1.8-1.8M7.4 7.4 5.6 5.6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="m15 5-7 7 7 7"/>',
@@ -209,7 +261,7 @@ function enterHousehold() {
   S.shownTab = null;
   renderLoading();
   // Erst rendern, wenn alles da ist, sonst blitzt kurz "Noch keine Gerichte" auf.
-  const pending = new Set(['household', 'dishes', 'cooked', 'wishes']);
+  const pending = new Set(DATA_SOURCES);
   unsubscribe = store.subscribe(S.code, (col, value) => {
     S[col] = value;
     if (col === 'household' && !value) {
@@ -228,7 +280,7 @@ function leaveHousehold() {
   unsubscribe?.();
   unsubscribe = null;
   localStorage.removeItem(SESSION_KEY);
-  Object.assign(S, { code: null, meId: null, household: null, dishes: [], cooked: [], wishes: [], shownTab: null });
+  Object.assign(S, { code: null, meId: null, household: null, dishes: [], cooked: [], wishes: [], plans: [], quick: [], shownTab: null });
   document.body.className = '';
   sheet.close();
   renderWelcome();
@@ -276,7 +328,9 @@ function renderFab() {
   const fab = (action, label) => `<button class="fab" data-action="${action}">${icon('plus')}<span>${label}</span></button>`;
   let html = '';
   if (S.tab === 'dishes') html = fab('newDish', 'Gericht');
-  if (S.tab === 'calendar' && S.day <= today()) html = fab('newCookForDay', 'Eintragen');
+  if (S.tab === 'calendar') {
+    html = S.calView === 'month' && S.day <= today() ? fab('newCookForDay', 'Eintragen') : fab('newPlan', 'Einplanen');
+  }
   if (S.tab === 'wishes' && other()) html = fab('newWish', 'Wünschen');
   if (S.tab === 'nutrition') html = fab('newCook', 'Eintragen');
   $('#fab-slot').innerHTML = html;
@@ -302,6 +356,7 @@ function renderDishesShell() {
   const sorts = [['recent', 'Zuletzt'], ['stale', 'Lange nicht'], ['often', 'Am häufigsten'], ['az', 'A–Z']];
   $('#view').innerHTML = `
     ${topBar('Gerichte')}
+    <button class="suggest-cta" data-action="suggest"><span aria-hidden="true">🎲</span> Was kochen wir heute?</button>
     <div class="searchbar"><input type="search" id="dish-search" placeholder="Gericht suchen" aria-label="Gericht suchen" value="${esc(S.search)}"></div>
     <div class="chips" role="group" aria-label="Sortierung" id="sort-chips">
       ${sorts.map(([id, label]) => `<button class="chip" data-action="sort" data-sort="${id}">${label}</button>`).join('')}
@@ -344,7 +399,7 @@ function updateDishes() {
     const meta = s.count ? `${s.count}× gekocht · ${fmtRelative(s.last)}` : 'Noch nie gekocht';
     return `<li><button class="row" data-action="openDish" data-id="${esc(d.id)}">
       <span class="tile">${esc(d.emoji)}</span>
-      <span class="row-text"><b>${esc(d.name)}</b><small>${esc(meta)}</small>${foodBadges(d)}</span>
+      <span class="row-text"><b>${esc(d.name)}</b><small>${esc(meta)}</small>${foodBadges(d)}${dishTags(d)}</span>
       ${icon('next')}
     </button></li>`;
   }).join('');
@@ -369,6 +424,7 @@ function openDish(id) {
     ${recipeSection(d)}
     <div class="stack">
       <button class="btn primary" data-action="newCook" data-dish="${esc(d.id)}">Gekocht eintragen</button>
+      <button class="btn" data-action="newPlan" data-dish="${esc(d.id)}">Einplanen</button>
       ${friend ? `<button class="btn" data-action="newWish" data-dish="${esc(d.id)}">Von ${esc(friend.name)} wünschen</button>` : ''}
     </div>
     ${logs.length ? `<h3>Verlauf</h3><ul class="history">
@@ -421,6 +477,18 @@ function foodBadges(dish) {
     const label = `${g.label}${assumed ? ' (angenommen)' : ''}`;
     return `<i class="food ${assumed ? 'assumed' : ''}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${g.badge}</i>`;
   }).join('')}</span>`;
+}
+
+function dishTags(d) {
+  const ids = dishIngredients(d);
+  const focus = focusNutrients().filter((n) => nutrientsOf(ids).includes(n));
+  const season = seasonalIngredients(new Date().getMonth() + 1);
+  const seasonal = ids.find((id) => season.has(id));
+  if (!focus.length && !seasonal) return '';
+  return `<span class="tags">
+    ${focus.length ? `<span class="tag focus">⭐ ${esc(focus.slice(0, 2).join(', '))}</span>` : ''}
+    ${seasonal ? `<span class="tag">🍂 ${esc(ingredient(seasonal).label)}</span>` : ''}
+  </span>`;
 }
 
 function dishIngredientsSection(d) {
@@ -546,24 +614,20 @@ function dishSuggestions(query) {
 
 /* ---------- Gekocht eintragen ---------- */
 
-function openCookForm({ dishId = null, dishName = '', date = today(), wishId = null, by = null } = {}) {
+function openCookForm({
+  dishId = null, dishName = '', date = today(), wishId = null, planId = null, by = null,
+} = {}) {
   const dish = S.dishes.find((d) => d.id === dishId);
-  const friendId = otherId();
-  const who = by ?? S.meId;
-  const option = (id, label) => `
-    <label class="${personClass(id)}"><input type="radio" name="by" value="${esc(id)}" ${who === id ? 'checked' : ''}><span>${esc(label)}</span></label>`;
+  const cookDate = date > today() ? today() : date;
   openSheet(`
     <h2>Gekocht eintragen</h2>
-    <form class="stack" data-form="cook" data-wish="${esc(wishId ?? '')}">
+    <form class="stack" data-form="cook" data-wish="${esc(wishId ?? '')}" data-plan="${esc(planId ?? '')}">
       ${dish
-        ? `<input type="hidden" name="dishName" value="${esc(dish.name)}"><p class="picked"><span class="tile">${esc(dish.emoji)}</span><b>${esc(dish.name)}</b></p>`
-        : dishPicker(dishName)}
+    ? `<input type="hidden" name="dishName" value="${esc(dish.name)}"><p class="picked"><span class="tile">${esc(dish.emoji)}</span><b>${esc(dish.name)}</b></p>`
+    : dishPicker(dishName)}
       <label class="field"><span>Wann</span>
-        <input type="date" name="date" required value="${esc(date)}" max="${today()}"></label>
-      <fieldset class="segmented"><legend>Wer hat gekocht?</legend>
-        ${option(S.meId, me().name)}
-        ${friendId ? option(friendId, other().name) + option('both', 'Zusammen') : ''}
-      </fieldset>
+        <input type="date" name="date" required value="${esc(cookDate)}" max="${today()}"></label>
+      ${whoField(by ?? S.meId, 'Wer hat gekocht?')}
       <label class="field"><span>Notiz (optional)</span>
         <input name="note" maxlength="200" placeholder="War besonders gut, weil …"></label>
       <button class="btn primary">Eintragen</button>
@@ -575,25 +639,21 @@ function saveCook(form) {
   const f = new FormData(form);
   const name = f.get('dishName').trim();
   const by = f.get('by');
+  const date = f.get('date');
   const ops = [];
-
-  let dish = findDishByName(name);
   const wish = S.wishes.find((w) => w.id === form.dataset.wish);
-  if (!dish) {
-    dish = {
-      id: newId(), name, emoji: wish?.dishEmoji ?? guessEmoji(name), note: '', links: [],
-      createdBy: S.meId, createdAt: Date.now(),
-    };
-    const { id, ...data } = dish;
-    ops.push({ type: 'set', col: 'dishes', id, data });
-  }
+  const dish = resolveDish(name, wish?.dishEmoji, ops);
+
+  // Passende Pläne erledigen sich mit dem Eintrag. "Wie geplant" gilt nur am geplanten Tag.
+  const donePlans = S.plans.filter((p) => p.id === form.dataset.plan || (p.dishId === dish.id && p.date === date));
+  donePlans.forEach((p) => ops.push({ type: 'delete', col: 'plans', id: p.id }));
 
   const logId = newId();
   ops.push({
     type: 'set', col: 'cooked', id: logId,
     data: {
-      dishId: dish.id, dishName: dish.name, dishEmoji: dish.emoji, date: f.get('date'), by,
-      note: f.get('note').trim(), createdBy: S.meId, createdAt: Date.now(),
+      dishId: dish.id, dishName: dish.name, dishEmoji: dish.emoji, date, by,
+      note: f.get('note').trim(), fromPlan: donePlans.some((p) => p.date === date), createdBy: S.meId, createdAt: Date.now(),
     },
   });
 
@@ -613,9 +673,186 @@ function saveCook(form) {
   toast(fulfilled.length ? `Eingetragen. Wunsch von ${personName(fulfilled[0].from)} erfüllt!` : 'Eingetragen.');
 }
 
+function openCookEdit(id) {
+  const c = S.cooked.find((x) => x.id === id);
+  if (!c) return;
+  openSheet(`
+    <h2>Eintrag bearbeiten</h2>
+    <form class="stack" data-form="cookEdit" data-id="${esc(id)}">
+      <p class="picked"><span class="tile">${esc(c.dishEmoji)}</span><b>${esc(S.dishes.find((d) => d.id === c.dishId)?.name ?? c.dishName)}</b></p>
+      <label class="field"><span>Verschieben auf</span>
+        <input type="date" name="date" required value="${esc(c.date)}" max="${today()}"></label>
+      ${whoField(c.by, 'Wer hat gekocht?')}
+      <label class="field"><span>Notiz (optional)</span>
+        <input name="note" maxlength="200" value="${esc(c.note)}"></label>
+      <button class="btn primary">Speichern</button>
+      <button class="btn danger" type="button" data-action="confirmDeleteCook" data-id="${esc(id)}">Eintrag löschen</button>
+      <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
+    </form>`);
+}
+
+/* ---------- Wochenplan ---------- */
+
+function openPlanDish({ dishId = null, date = null } = {}) {
+  const dish = S.dishes.find((d) => d.id === dishId);
+  const planDate = date && date >= today() ? date : today();
+  openSheet(`
+    <h2>Gericht einplanen</h2>
+    <form class="stack" data-form="planDish">
+      ${dish
+    ? `<input type="hidden" name="dishName" value="${esc(dish.name)}"><p class="picked"><span class="tile">${esc(dish.emoji)}</span><b>${esc(dish.name)}</b></p>`
+    : dishPicker('')}
+      <label class="field"><span>Wann</span>
+        <input type="date" name="date" required min="${today()}" value="${esc(planDate)}"></label>
+      ${whoField(S.meId, 'Wer kocht?')}
+      <button class="btn primary">Einplanen</button>
+      <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
+    </form>`);
+}
+
+function openPlanEntry(id) {
+  const p = S.plans.find((x) => x.id === id);
+  if (!p) return;
+  openSheet(`
+    <h2>Geplantes Gericht</h2>
+    <form class="stack" data-form="planEdit" data-id="${esc(id)}">
+      <p class="picked"><span class="tile planned">${esc(p.dishEmoji)}</span><b>${esc(S.dishes.find((d) => d.id === p.dishId)?.name ?? p.dishName)}</b></p>
+      <label class="field"><span>Verschieben auf</span>
+        <input type="date" name="date" required min="${today()}" value="${esc(p.date >= today() ? p.date : today())}"></label>
+      ${whoField(p.by, 'Wer kocht?')}
+      <button class="btn">Speichern</button>
+      <button class="btn primary" type="button" data-action="cookPlan" data-id="${esc(id)}">Gekocht eintragen</button>
+      <button class="btn danger" type="button" data-action="deletePlan" data-id="${esc(id)}">Plan entfernen</button>
+      <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
+    </form>`);
+}
+
+/* ---------- Schnell-Eintrag ---------- */
+
+const quickId = (date) => `${date}_${S.meId}`;
+const quickNames = (q) => q.items.filter(isActiveIngredient).map((id) => ingredient(id)?.label).filter(Boolean);
+
+function openQuick(date = today()) {
+  const entry = S.quick.find((q) => q.id === quickId(date));
+  const selected = entry?.items ?? [];
+  const groups = activeGroups().filter((g) => QUICK_ITEMS.some((id) => ingredient(id)?.group === g.id && isActiveIngredient(id)));
+  openSheet(`
+    <h2>Nebenbei gegessen</h2>
+    <p class="muted">Frühstück, Obst, Nüsse: alles, wofür sich kein Gericht lohnt. Das gilt nur für dich.</p>
+    <form class="stack" data-form="quick">
+      <label class="field"><span>Wann</span>
+        <input type="date" name="date" required value="${esc(date)}" max="${today()}" data-quick-date></label>
+      <div class="ingredients">
+        ${groups.map((g) => `<div class="quick-group"><h3>${g.badge} ${esc(g.label)}</h3>
+          <div class="ing-list">${QUICK_ITEMS.filter((id) => ingredient(id)?.group === g.id).map((id) => `<label class="ing"><input type="checkbox" name="item" value="${id}" ${selected.includes(id) ? 'checked' : ''}><span>${esc(ingredient(id).label)}</span></label>`).join('')}</div>
+        </div>`).join('')}
+      </div>
+      <button class="btn primary">Speichern</button>
+      <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
+    </form>`);
+}
+
+function quickCard() {
+  const entry = S.quick.find((q) => q.id === quickId(today()));
+  const names = entry ? quickNames(entry) : [];
+  return `<button class="quick-card" data-action="openQuick">
+    <span class="tile" aria-hidden="true">⚡</span>
+    <span class="row-text"><b>Heute nebenbei</b><small>${names.length ? esc(names.join(', ')) : 'Frühstück, Obst oder Nüsse schnell antippen'}</small></span>
+    ${icon(names.length ? 'next' : 'plus')}
+  </button>`;
+}
+
+/* ---------- Was kochen wir heute? ---------- */
+
+function openSuggestion(step = 0) {
+  if (!S.dishes.length) {
+    openSheet(`<h2>Was kochen wir heute?</h2>
+      <p class="muted">Dafür braucht es erst ein paar Gerichte.</p>
+      <div class="stack"><button class="btn primary" data-action="newDish">Gericht anlegen</button>
+      <button class="btn quiet" data-action="closeSheet">Schließen</button></div>`);
+    return;
+  }
+  if (!S.suggestion || !step) {
+    S.suggestion = {
+      index: 0,
+      list: rankDishes({
+        dishes: S.dishes, cooked: S.cooked, wishes: S.wishes, plans: S.plans, quick: S.quick, meId: S.meId,
+        focus: focusNutrients(), otherName: other()?.name,
+      }),
+    };
+  } else {
+    S.suggestion.index = (S.suggestion.index + step) % S.suggestion.list.length;
+  }
+  const { dish, reasons } = S.suggestion.list[S.suggestion.index];
+  openSheet(`
+    <div class="suggestion">
+      <span class="suggest-emoji" aria-hidden="true">${esc(dish.emoji)}</span>
+      <p class="muted">Wie wäre es mit</p>
+      <h2>${esc(dish.name)}</h2>
+      ${foodBadges(dish)}
+      ${reasons.length ? `<ul class="reasons">${reasons.slice(0, 3).map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+    </div>
+    <div class="stack">
+      <button class="btn primary" data-action="planToday" data-id="${esc(dish.id)}">Für heute einplanen</button>
+      <button class="btn" data-action="suggestNext">${icon('dice')} Nochmal würfeln</button>
+      <button class="btn quiet" data-action="openDish" data-id="${esc(dish.id)}">Details ansehen</button>
+    </div>`);
+}
+
 /* ---------- Kalender ---------- */
 
-function renderCalendar() {
+function calendarData() {
+  const collect = (list, dateOf) => {
+    const map = new Map();
+    for (const item of list) {
+      const date = dateOf(item);
+      if (!date) continue;
+      if (!map.has(date)) map.set(date, []);
+      map.get(date).push(item);
+    }
+    return map;
+  };
+  return {
+    cooked: collect(S.cooked, (c) => c.date),
+    wishes: collect(S.wishes.filter((w) => w.status === 'planned'), (w) => w.plannedDate),
+    plans: collect(S.plans, (p) => p.date),
+    quick: collect(S.quick, (q) => q.date),
+  };
+}
+
+function dayEntries(date, data) {
+  const now = today();
+  const dishName = (item) => S.dishes.find((d) => d.id === item.dishId)?.name ?? item.dishName;
+  return [
+    ...(data.cooked.get(date) ?? []).map((c) => `<li class="entry">
+      <span class="tile">${esc(c.dishEmoji)}</span>
+      <span class="row-text"><b>${esc(dishName(c))}</b>
+        <small><span class="person ${personClass(c.by)}">${esc(personName(c.by))}</span>${c.note ? ` · ${esc(c.note)}` : ''}</small>
+        ${foodBadges(S.dishes.find((d) => d.id === c.dishId) ?? { name: c.dishName })}</span>
+      <button class="btn quiet small" data-action="editCook" data-id="${esc(c.id)}">Bearbeiten</button>
+    </li>`),
+    ...(data.plans.get(date) ?? []).map((p) => `<li class="entry">
+      <span class="tile planned">${esc(p.dishEmoji)}</span>
+      <span class="row-text"><b>${esc(dishName(p))}</b>
+        <small>${date < now ? 'War geplant' : 'Geplant'} · <span class="person ${personClass(p.by)}">${esc(personName(p.by))}</span></small></span>
+      <button class="btn quiet small" data-action="openPlan" data-id="${esc(p.id)}">Bearbeiten</button>
+    </li>`),
+    ...(data.wishes.get(date) ?? []).map((w) => `<li class="entry">
+      <span class="tile planned">${esc(w.dishEmoji)}</span>
+      <span class="row-text"><b>${esc(w.dishName)}</b>
+        <small>Wunsch · <span class="person ${personClass(w.to)}">${esc(personName(w.to))}</span> kocht</small></span>
+      ${w.to === S.meId ? `<button class="btn quiet small" data-action="planWish" data-id="${esc(w.id)}">Verschieben</button>` : ''}
+    </li>`),
+    ...(data.quick.get(date) ?? []).filter((q) => quickNames(q).length).map((q) => `<li class="entry">
+      <span class="tile">⚡</span>
+      <span class="row-text"><b>Nebenbei</b>
+        <small><span class="person ${personClass(q.who)}">${esc(personName(q.who))}</span> · ${esc(quickNames(q).join(', '))}</small></span>
+      ${q.who === S.meId ? `<button class="btn quiet small" data-action="openQuick" data-date="${esc(date)}">Bearbeiten</button>` : ''}
+    </li>`),
+  ].join('');
+}
+
+function monthView(data) {
   const first = S.month;
   const year = first.getFullYear();
   const month = first.getMonth();
@@ -624,28 +861,17 @@ function renderCalendar() {
   const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
   const now = today();
 
-  const cookedByDay = new Map();
-  for (const c of S.cooked) {
-    if (!cookedByDay.has(c.date)) cookedByDay.set(c.date, []);
-    cookedByDay.get(c.date).push(c);
-  }
-  const plannedByDay = new Map();
-  for (const w of S.wishes) {
-    if (w.status !== 'planned' || !w.plannedDate) continue;
-    if (!plannedByDay.has(w.plannedDate)) plannedByDay.set(w.plannedDate, []);
-    plannedByDay.get(w.plannedDate).push(w);
-  }
-
   let cells = '<span class="blank"></span>'.repeat(leading);
   for (let n = 1; n <= daysInMonth; n += 1) {
     const iso = `${prefix}-${String(n).padStart(2, '0')}`;
-    const cooked = cookedByDay.get(iso) ?? [];
-    const planned = plannedByDay.get(iso) ?? [];
+    const cooked = data.cooked.get(iso) ?? [];
+    const planned = [...(data.plans.get(iso) ?? []).map((p) => ({ emoji: p.dishEmoji, who: p.by, name: p.dishName })),
+      ...(data.wishes.get(iso) ?? []).map((w) => ({ emoji: w.dishEmoji, who: w.to, name: w.dishName }))];
     const marks = [
       ...cooked.map((c) => `<i class="meal ${personClass(c.by)}">${esc(c.dishEmoji)}</i>`),
-      ...planned.map((w) => `<i class="meal planned ${personClass(w.to)}">${esc(w.dishEmoji)}</i>`),
+      ...planned.map((p) => `<i class="meal planned ${personClass(p.who)}">${esc(p.emoji)}</i>`),
     ];
-    const names = [...cooked.map((c) => c.dishName), ...planned.map((w) => `${w.dishName} (geplant)`)];
+    const names = [...cooked.map((c) => c.dishName), ...planned.map((p) => `${p.name} (geplant)`)];
     const label = `${fmtLong(iso)}${names.length ? `: ${names.join(', ')}` : ''}`;
     cells += `<button class="day ${iso === now ? 'today' : ''}" data-action="pickDay" data-day="${iso}"
       aria-pressed="${iso === S.day}" aria-label="${esc(label)}">
@@ -661,26 +887,8 @@ function renderCalendar() {
       ? ` · ${Object.entries(members()).map(([id, m]) => `<span class="person p${m.color}">${esc(m.name)} ${tally(id)}</span>`).join(' ')}` : ''}`
     : 'Diesen Monat noch nichts eingetragen';
 
-  const dayCooked = cookedByDay.get(S.day) ?? [];
-  const dayPlanned = plannedByDay.get(S.day) ?? [];
-  const entries = [
-    ...dayCooked.map((c) => `<li class="entry">
-      <span class="tile">${esc(c.dishEmoji)}</span>
-      <span class="row-text"><b>${esc(S.dishes.find((d) => d.id === c.dishId)?.name ?? c.dishName)}</b>
-        <small><span class="person ${personClass(c.by)}">${esc(personName(c.by))}</span>${c.note ? ` · ${esc(c.note)}` : ''}</small>
-        ${foodBadges(S.dishes.find((d) => d.id === c.dishId) ?? { name: c.dishName })}</span>
-      <button class="btn quiet small" data-action="confirmDeleteCook" data-id="${esc(c.id)}">Löschen</button>
-    </li>`),
-    ...dayPlanned.map((w) => `<li class="entry">
-      <span class="tile planned">${esc(w.dishEmoji)}</span>
-      <span class="row-text"><b>${esc(w.dishName)}</b>
-        <small>Geplant · <span class="person ${personClass(w.to)}">${esc(personName(w.to))}</span> kocht</small></span>
-      ${S.day <= now ? `<button class="btn quiet small" data-action="cookWish" data-id="${esc(w.id)}">Gekocht</button>` : ''}
-    </li>`),
-  ].join('');
-
-  $('#view').innerHTML = `
-    ${topBar('Kalender')}
+  const entries = dayEntries(S.day, data);
+  return `
     <div class="month-nav">
       <button class="icon-btn" data-action="month" data-step="-1" aria-label="Voriger Monat">${icon('back')}</button>
       <h2>${esc(fmtMonth(first))}</h2>
@@ -689,10 +897,91 @@ function renderCalendar() {
     <div class="weekdays" aria-hidden="true">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d) => `<span>${d}</span>`).join('')}</div>
     <div class="grid">${cells}</div>
     <p class="summary">${summary}</p>
+    ${inMonth.length ? `<button class="btn small recap-btn" data-action="openRecap" data-prefix="${prefix}">🎞️ Rückblick ${esc(fmtMonth(first))}</button>` : ''}
     <section class="day-panel">
       <h3>${esc(fmtLong(S.day))}</h3>
       ${entries ? `<ul class="list">${entries}</ul>` : `<p class="muted">${S.day > now ? 'Für diesen Tag ist nichts geplant.' : 'An diesem Tag ist nichts eingetragen.'}</p>`}
+      ${S.day >= now ? `<button class="btn small day-plan" data-action="newPlan" data-date="${S.day}">Für diesen Tag einplanen</button>` : ''}
     </section>`;
+}
+
+function weekView(data) {
+  const now = today();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(S.calWeek, i));
+  const title = `${fmtDay(days[0])} bis ${fmtDay(days[6])}`;
+  return `
+    <div class="month-nav">
+      <button class="icon-btn" data-action="week" data-step="-7" aria-label="Vorige Woche">${icon('back')}</button>
+      <h2 class="week-title">${esc(title)}</h2>
+      <button class="icon-btn" data-action="week" data-step="7" aria-label="Nächste Woche">${icon('next')}</button>
+    </div>
+    <ul class="week">${days.map((date) => {
+    const entries = dayEntries(date, data);
+    return `<li class="week-day ${date === now ? 'today' : ''}">
+        <div class="week-head">
+          <h3>${esc(fmtLong(date))}</h3>
+          <span class="week-actions">
+            ${date >= now ? `<button class="btn quiet small" data-action="newPlan" data-date="${date}">Einplanen</button>` : ''}
+            ${date <= now ? `<button class="btn quiet small" data-action="newCookOn" data-date="${date}">Eintragen</button>` : ''}
+          </span>
+        </div>
+        ${entries ? `<ul class="list">${entries}</ul>` : ''}
+      </li>`;
+  }).join('')}</ul>`;
+}
+
+function renderCalendar() {
+  const data = calendarData();
+  $('#view').innerHTML = `
+    ${topBar('Kalender')}
+    <div class="switch" role="group" aria-label="Ansicht">
+      <button data-action="calView" data-view="month" aria-pressed="${S.calView === 'month'}">Monat</button>
+      <button data-action="calView" data-view="week" aria-pressed="${S.calView === 'week'}">Woche</button>
+    </div>
+    ${S.calView === 'month' ? monthView(data) : weekView(data)}`;
+}
+
+/* ---------- Rückblick ---------- */
+
+function recapText(prefix) {
+  const r = computeRecap({ ...S, points: S.points }, prefix);
+  const month = fmtMonth(fromISO(`${prefix}-01`));
+  const lines = [`Unser ${month} bei Mahlzeit:`, `🍽️ ${r.meals}× gekocht an ${r.days} Tagen`];
+  if (r.topDish) lines.push(`👑 Liebling: ${r.topDish.name} (${r.topDish.count}×)`);
+  if (r.topGroup) lines.push(`${r.topGroup.badge} Am häufigsten: ${r.topGroup.label}`);
+  lines.push(`🥄 ${r.spoons} Löffel verdient`);
+  return lines.join('\n');
+}
+
+function openRecap(prefix) {
+  const r = computeRecap({ ...S, points: S.points }, prefix);
+  const month = fmtMonth(fromISO(`${prefix}-01`));
+  const stat = (value, label) => `<div><dd>${esc(value)}</dd><dt>${esc(label)}</dt></div>`;
+  const cooks = [...r.cooks.entries()].sort((a, b) => b[1] - a[1])
+    .map(([id, n]) => `<span class="person ${personClass(id)}">${esc(personName(id))} ${n}×</span>`).join(' ');
+  openSheet(`
+    <div class="recap">
+      <p class="muted">Euer Rückblick</p>
+      <h2>${esc(month)}</h2>
+      ${r.topDish ? `<div class="recap-hero"><span aria-hidden="true">${esc(r.topDish.emoji)}</span>
+        <div><small>Liebling des Monats</small><b>${esc(r.topDish.name)}</b><small>${r.topDish.count}× gekocht</small></div></div>` : ''}
+      <dl class="recap-stats">
+        ${stat(`${r.meals}×`, 'gekocht')}
+        ${stat(r.days, r.days === 1 ? 'Kochtag' : 'Kochtage')}
+        ${stat(r.spoons.toLocaleString('de-DE'), 'Löffel verdient')}
+        ${stat(r.bestRun, r.bestRun === 1 ? 'Tag Gemüse-Serie' : 'Tage Gemüse-Serie')}
+        ${stat(r.wishesDone, r.wishesDone === 1 ? 'Wunsch erfüllt' : 'Wünsche erfüllt')}
+        ${stat(r.newDishes, r.newDishes === 1 ? 'neues Gericht' : 'neue Gerichte')}
+      </dl>
+      ${r.topGroup ? `<p>${r.topGroup.badge} Am häufigsten dabei: <b>${esc(r.topGroup.label)}</b></p>` : ''}
+      ${r.topIngredient ? `<p>🥇 Top-Zutat: <b>${esc(r.topIngredient.label)}</b> (${r.topIngredient.count}×)</p>` : ''}
+      ${cooks ? `<p class="contribution">${cooks}</p>` : ''}
+      ${r.badges.length ? `<p>Neue Abzeichen: ${r.badges.map((b) => `${b.emoji} ${esc(b.name)}`).join(', ')}</p>` : ''}
+    </div>
+    <div class="stack">
+      <button class="btn primary" data-action="shareRecap" data-prefix="${prefix}">Rückblick teilen</button>
+      <button class="btn quiet" data-action="closeSheet">Schließen</button>
+    </div>`);
 }
 
 /* ---------- Wünsche ---------- */
@@ -724,24 +1013,29 @@ function renderWishes() {
     ? `<span class="pill planned">Geplant für ${esc(fmtDay(w.plannedDate))}</span>`
     : `<span class="pill">Offen seit ${esc(fmtRelative(toISO(new Date(w.createdAt))))}</span>`);
 
-  const incomingCard = (w) => `<li class="wish ${personClass(w.from)}">
+  const goldenLabel = (w) => (w.golden ? '<span class="pill golden">✨ Goldener Wunsch</span>' : '');
+
+  const incomingCard = (w) => `<li class="wish ${personClass(w.from)} ${w.golden ? 'golden' : ''}">
     <p class="wish-from">${esc(personName(w.from))} wünscht sich</p>
+    ${goldenLabel(w)}
     <div class="wish-dish"><span class="tile">${esc(w.dishEmoji)}</span><b>${esc(w.dishName)}</b></div>
     ${w.note ? `<p class="note">${esc(w.note)}</p>` : ''}
     ${statusLine(w)}
     <div class="wish-actions">
       <button class="btn primary small" data-action="cookWish" data-id="${esc(w.id)}">Gekocht</button>
       <button class="btn small" data-action="planWish" data-id="${esc(w.id)}">${w.status === 'planned' ? 'Verschieben' : 'Einplanen'}</button>
-      <button class="btn quiet small" data-action="declineWish" data-id="${esc(w.id)}">${w.status === 'planned' ? 'Doch nicht' : 'Lieber nicht'}</button>
+      ${w.golden ? '' : `<button class="btn quiet small" data-action="declineWish" data-id="${esc(w.id)}">${w.status === 'planned' ? 'Doch nicht' : 'Lieber nicht'}</button>`}
     </div>
   </li>`;
 
-  const outgoingCard = (w) => `<li class="wish ${personClass(S.meId)}">
+  const outgoingCard = (w) => `<li class="wish ${personClass(S.meId)} ${w.golden ? 'golden' : ''}">
     <p class="wish-from">Dein Wunsch an ${esc(personName(w.to))}</p>
+    ${goldenLabel(w)}
     <div class="wish-dish"><span class="tile">${esc(w.dishEmoji)}</span><b>${esc(w.dishName)}</b></div>
     ${w.note ? `<p class="note">${esc(w.note)}</p>` : ''}
     ${statusLine(w)}
     <div class="wish-actions">
+      <a class="btn small whatsapp" href="${esc(whatsappUrl(w))}" target="_blank" rel="noopener noreferrer">Per WhatsApp</a>
       <button class="btn quiet small" data-action="confirmDeleteWish" data-id="${esc(w.id)}">Zurückziehen</button>
     </div>
   </li>`;
@@ -762,20 +1056,41 @@ function renderWishes() {
       <button data-action="wishTab" data-tab="in" aria-pressed="${S.wishTab === 'in'}">An mich${incoming.length ? ` (${incoming.length})` : ''}</button>
       <button data-action="wishTab" data-tab="out" aria-pressed="${S.wishTab === 'out'}">Von mir${outgoing.length ? ` (${outgoing.length})` : ''}</button>
     </div>
+    <p class="wish-balance">✨ Dein Guthaben für Goldene Wünsche: <b>${Math.max(wishBalance(S.points, S.wishes, S.meId), 0).toLocaleString('de-DE')} 🥄</b></p>
     ${shown.length
       ? `<ul class="wishes">${shown.map(S.wishTab === 'in' ? incomingCard : outgoingCard).join('')}</ul>`
       : `<div class="empty"><span class="empty-emoji">💌</span>${emptyText}</div>`}
     ${closed.length ? `<section class="closed-list"><h3>Erledigt</h3><ul>${closed.map(closedLine).join('')}</ul></section>` : ''}`;
 }
 
+function whatsappUrl(wish) {
+  const lines = [
+    wish.golden
+      ? `✨ Goldener Wunsch: Ich wünsche mir von dir ${wish.dishName} ${wish.dishEmoji}. Den kannst du nicht ablehnen!`
+      : `Ich wünsche mir von dir: ${wish.dishName} ${wish.dishEmoji}`,
+  ];
+  if (wish.note) lines.push(wish.note);
+  lines.push(`Steht in Mahlzeit: ${location.origin}${location.pathname}`);
+  return `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
+}
+
 function openWishForm(dishId) {
   const dish = S.dishes.find((d) => d.id === dishId);
+  const balance = wishBalance(S.points, S.wishes, S.meId);
+  const canAfford = balance >= GOLDEN_WISH_COST;
   openSheet(`
     <h2>Von ${esc(other().name)} wünschen</h2>
     <form class="stack" data-form="wish">
       ${dishPicker(dish?.name ?? '')}
       <label class="field"><span>Nachricht (optional)</span>
         <input name="note" maxlength="200" placeholder="Am liebsten dieses Wochenende …"></label>
+      <label class="golden-option ${canAfford ? '' : 'locked'}">
+        <input type="checkbox" name="golden" ${canAfford ? '' : 'disabled'}>
+        <span class="row-text"><b>✨ Als Goldenen Wunsch einlösen</b>
+          <small>Kostet ${GOLDEN_WISH_COST} 🥄 und kann nicht abgelehnt werden. ${canAfford
+    ? `Du hast ${balance.toLocaleString('de-DE')} 🥄.`
+    : `Dir fehlen noch ${(GOLDEN_WISH_COST - balance).toLocaleString('de-DE')} 🥄.`}</small></span>
+      </label>
       <button class="btn primary">Wunsch abschicken</button>
       <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
     </form>`);
@@ -785,21 +1100,26 @@ function saveWish(form) {
   const f = new FormData(form);
   const name = f.get('dishName').trim();
   const dish = findDishByName(name);
-  commit([{
-    type: 'set', col: 'wishes', id: newId(),
-    data: {
-      dishId: dish?.id ?? null,
-      dishName: dish?.name ?? name,
-      dishEmoji: dish?.emoji ?? guessEmoji(name),
-      from: S.meId, to: otherId(), note: f.get('note').trim(),
-      status: 'open', plannedDate: null, createdAt: Date.now(),
-    },
-  }]);
+  const golden = f.get('golden') === 'on' && wishBalance(S.points, S.wishes, S.meId) >= GOLDEN_WISH_COST;
+  const wish = {
+    dishId: dish?.id ?? null,
+    dishName: dish?.name ?? name,
+    dishEmoji: dish?.emoji ?? guessEmoji(name),
+    from: S.meId, to: otherId(), note: f.get('note').trim(),
+    status: 'open', plannedDate: null, golden, createdAt: Date.now(),
+  };
+  commit([{ type: 'set', col: 'wishes', id: newId(), data: wish }]);
   S.tab = 'wishes';
   S.wishTab = 'out';
   sheet.close();
   render();
-  toast(`Wunsch an ${other().name} geschickt.`);
+  openSheet(`
+    <h2>${golden ? '✨ Goldener Wunsch ist raus' : 'Wunsch ist eingetragen'}</h2>
+    <p class="muted">${esc(other().name)} sieht ihn beim nächsten Öffnen der App. Du kannst auch direkt Bescheid sagen.</p>
+    <div class="stack">
+      <a class="btn primary whatsapp" href="${esc(whatsappUrl(wish))}" target="_blank" rel="noopener noreferrer" data-action="closeSheet">Per WhatsApp schicken</a>
+      <button class="btn quiet" data-action="closeSheet">Fertig</button>
+    </div>`);
 }
 
 function openPlanForm(id) {
@@ -820,7 +1140,7 @@ const lastSevenDays = () => Array.from({ length: 7 }, (_, i) => addDays(today(),
 
 function renderNutrition() {
   const dates = lastSevenDays();
-  const { meals, groupDays, nutrients } = summarize(S.cooked, S.dishes, dates);
+  const { meals, groupDays, nutrients } = summarize(S.cooked, S.dishes, dates, S.quick);
   const core = coreGroups();
   const missing = core.filter((g) => !groupDays.get(g.id).size);
   const head = !meals
@@ -842,24 +1162,34 @@ function renderNutrition() {
 
   const combos = activeCombos().filter((c) => !findDishByName(c.name));
   const vegan = currentDiet().id === 'vegan';
+  const supplements = supplementedNutrients();
+  const focus = focusNutrients();
   // Vegan lässt sich B12 laut DGE nicht sicher über Essen decken, deshalb hier kein Häkchen.
   if (vegan) nutrients.delete('B12');
-  const b12Note = vegan
+  const b12Note = vegan && !supplements.includes('B12')
     ? `<p class="diet-note"><b>B12 nicht vergessen:</b> Laut DGE ist bei veganer Ernährung eine ausreichende Versorgung nur mit einem Präparat möglich, Hefeflocken und angereicherte Produkte reichen nicht sicher. Der Wert sollte regelmäßig ärztlich geprüft werden. <a class="link" href="${SOURCES.B12}" target="_blank" rel="noopener noreferrer">DGE</a></p>`
     : '';
 
   $('#view').innerHTML = `
     ${topBar('Ernährung')}
     ${levelCard()}
+    ${quickCard()}
+    ${focusSection()}
     ${questList()}
+    <button class="btn small badges-btn" data-action="openBadges">🏅 Abzeichen: ${S.points.badges.filter((b) => b.earned).length} von ${S.points.badges.length}</button>
     <div class="nutrition-head">${head}</div>
     <ul class="list">${activeGroups().map(groupRow).join('')}</ul>
     <section class="nutrition-section">
       <h3>Nährstoffe in den letzten 7 Tagen</h3>
-      <ul class="nutrients">${NUTRIENTS.map((n) => `<li class="${nutrients.has(n) ? 'on' : ''}">${nutrients.has(n) ? '✓ ' : ''}${esc(n)}</li>`).join('')}</ul>
+      <ul class="nutrients">${NUTRIENTS.map((n) => {
+    if (supplements.includes(n)) return `<li class="supplement">💊 ${esc(n)}</li>`;
+    const on = nutrients.has(n);
+    return `<li class="${on ? 'on' : ''} ${focus.includes(n) ? 'focus' : ''}">${focus.includes(n) ? '⭐ ' : ''}${on ? '✓ ' : ''}${esc(n)}</li>`;
+  }).join('')}</ul>
       ${b12Note}
       <p class="fineprint">Zeigt, was in euren eingetragenen Gerichten vorkommt, nicht wie viel davon. Frühstück und Snacks zählen nur, wenn ihr sie als eigenes Gericht eintragt.</p>
     </section>
+    ${seasonSection()}
     ${combos.length ? `<section class="nutrition-section">
       <h3>Einfache Kombis</h3>
       <ul class="list">${combos.map((c) => `<li><button class="row" data-action="addCombo" data-name="${esc(c.name)}">
@@ -873,6 +1203,71 @@ function renderNutrition() {
         <ul>${TIPS.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
       </details>
     </section>`;
+}
+
+function focusSection() {
+  const focus = focusNutrients();
+  const supplements = supplementedNutrients();
+  if (!focus.length && !supplements.length) {
+    return '<button class="btn small focus-empty" data-action="openFocus">⭐ Persönliche Fokus-Nährstoffe wählen</button>';
+  }
+  const dates = lastSevenDays();
+  const mine = S.quick.filter((q) => q.who === S.meId);
+  const rows = focus.map((n) => {
+    const days = dates.filter((d) => summarize(S.cooked, S.dishes, [d], mine).nutrients.has(n)).length;
+    const dots = dates.map((d) => `<i class="${summarize(S.cooked, S.dishes, [d], mine).nutrients.has(n) ? 'on' : ''}"></i>`).join('');
+    const match = S.dishes.filter((d) => nutrientsOf(dishIngredients(d)).includes(n)).slice(0, 2).map((d) => d.name);
+    return `<li><span class="row-text"><b>⭐ ${esc(n)}</b>
+      <small>${days ? `${days} von 7 Tagen` : 'Diese Woche noch nicht dabei'}${!days && match.length ? `. Passt: ${esc(match.join(', '))}` : ''}</small>
+      <span class="dots" aria-hidden="true">${dots}</span></span></li>`;
+  }).join('');
+  return `<section class="focus-card">
+    <div class="focus-head"><h3>Mein Fokus</h3><button class="btn quiet small" data-action="openFocus">Ändern</button></div>
+    ${rows ? `<ul class="focus-list">${rows}</ul>` : ''}
+    ${supplements.length ? `<p class="muted setting-hint">💊 Per Präparat: ${esc(supplements.join(', '))}</p>` : ''}
+  </section>`;
+}
+
+function openFocus() {
+  const state = loadFocus();
+  const option = (nutrient, value, label) => `<label class="accent"><input type="radio" name="focus-${esc(nutrient)}" value="${value}" data-nutrient="${esc(nutrient)}" ${(state[nutrient] ?? 'normal') === value ? 'checked' : ''}><span>${label}</span></label>`;
+  openSheet(`
+    <h2>Mein Fokus</h2>
+    <p class="muted">Fokus-Nährstoffe hebt die App bei dir besonders hervor. Was du als Präparat nimmst, wird nicht extra hervorgehoben. Das bleibt nur auf diesem Handy.</p>
+    <ul class="focus-settings">${NUTRIENTS.map((n) => `<li><b>${esc(n)}</b>
+      <fieldset class="segmented" aria-label="${esc(n)}">
+        ${option(n, 'normal', 'Normal')}${option(n, 'focus', '⭐ Fokus')}${option(n, 'supplement', '💊 Präparat')}
+      </fieldset></li>`).join('')}</ul>
+    <div class="sheet-foot"><button class="btn primary" data-action="closeSheet">Fertig</button></div>`);
+}
+
+function seasonSection() {
+  const monthNumber = new Date().getMonth() + 1;
+  const season = seasonalIngredients(monthNumber);
+  const items = inSeason(monthNumber);
+  const matches = S.dishes.filter((d) => dishIngredients(d).some((id) => season.has(id))).slice(0, 3);
+  return `<section class="nutrition-section">
+    <h3>Jetzt Saison</h3>
+    <ul class="nutrients season-list">${items.map((i) => `<li>${esc(i.label)}</li>`).join('')}</ul>
+    ${matches.length ? `<p class="fineprint">Bei euch: ${matches.map((d) => `${esc(d.emoji)} ${esc(d.name)}`).join(', ')}</p>` : ''}
+    <p class="fineprint">Frisch aus heimischem Anbau, ohne Lagerware, laut <a class="link" href="${SEASON_SOURCE}" target="_blank" rel="noopener noreferrer">regional-saisonal.de</a>. Die DGE empfiehlt Gemüse und Obst der Saison.</p>
+  </section>`;
+}
+
+function openBadges() {
+  const { badges } = S.points;
+  const earned = badges.filter((b) => b.earned).length;
+  const reward = badges.filter((b) => b.earned).reduce((sum, b) => sum + b.reward, 0);
+  openSheet(`
+    <h2>Abzeichen</h2>
+    <p class="muted">${earned} von ${badges.length} gesammelt, zusammen ${reward} 🥄.</p>
+    <ul class="badge-grid">${badges.map((b) => `<li class="${b.earned ? 'earned' : ''}">
+      <span class="badge-emoji" aria-hidden="true">${b.earned ? b.emoji : '🔒'}</span>
+      <b>${esc(b.name)}</b>
+      <small>${esc(b.goal)}</small>
+      <small class="badge-state">${b.earned ? `+${b.reward} 🥄 · ${esc(fmtDay(b.date))}` : `${b.count} von ${b.target} · +${b.reward} 🥄`}</small>
+    </li>`).join('')}</ul>
+    <div class="sheet-foot"><button class="btn quiet" data-action="closeSheet">Schließen</button></div>`);
 }
 
 function openGroup(id) {
@@ -935,6 +1330,7 @@ function openPoints() {
     ['Wunsch eingeplant', USAGE_RULES.plan],
     ['Wunsch erfüllt', USAGE_RULES.fulfil],
     ['Am geplanten Tag gekocht', USAGE_RULES.onTime],
+    ['Schnell-Eintrag, einer pro Person und Tag', USAGE_RULES.quick],
   ];
   const hasGroup = (id) => activeGroups().some((g) => g.id === id);
   const groupRules = activeGroups().filter((g) => GROUP_RULES[g.id])
@@ -954,6 +1350,7 @@ function openPoints() {
       </li>`).join('')}</ol>
     </details>
 
+    <div class="stack points-actions"><button class="btn" data-action="openBadges">🏅 Abzeichen: ${S.points.badges.filter((b) => b.earned).length} von ${S.points.badges.length}</button></div>
     <details class="rules"><summary>So gibt es Löffel</summary>
       <h3>Pro Tag, einmal je Bereich</h3>
       <ul class="rule-list">${groupRules.map((g) => {
@@ -972,6 +1369,8 @@ function openPoints() {
     ? `<li><span class="reward">+${BONUS.fish}</span><span class="row-text">Angelschein: Fisch mindestens einmal pro Woche</span></li>`
     : `<li><span class="reward">+${BONUS.seeds}</span><span class="row-text"><span>Nussknacker: an 3 Tagen pro Woche Nüsse, Samen oder gutes Öl</span><small>DGE: täglich eine kleine Handvoll Nüsse. ${sourceLinks(['DGE'])}</small></span></li>`}
       </ul>
+      <h3>Abzeichen und Gutscheine</h3>
+      <p class="fineprint">Jedes Abzeichen gibt einmalig Löffel. Ein Goldener Wunsch kostet ${GOLDEN_WISH_COST} 🥄 aus deinem Anteil, das Level bleibt davon unberührt.</p>
       <p class="fineprint">Die Empfehlungen stammen von WHO, DGE und EU, die Punktzahlen sind eine eigene Gewichtung danach. Minuspunkte gibt es keine. Gezählt wird nur, ob etwas vorkommt, nicht die Menge. Das ersetzt keine Ernährungsberatung.</p>
     </details>
 
@@ -996,23 +1395,32 @@ function openLevelUp(level) {
 
 let lastTotal = null;
 let pointsTimer = null;
+let quietPoints = false; // Eine Änderung der Ernährungsweise rechnet nur neu, verdient ist dadurch nichts.
 
 // Kurz warten: Bei Firebase kommt ein Eintrag als mehrere Snapshots an, das soll ein Pop sein.
 function notePointsChange() {
   clearTimeout(pointsTimer);
   pointsTimer = setTimeout(() => {
     const { total, level } = S.points;
-    if (lastTotal !== null && total > lastTotal) showPointsPop(total - lastTotal);
+    if (!quietPoints && lastTotal !== null && total > lastTotal) showPointsPop(total - lastTotal);
     lastTotal = total;
+
+    const earnedIds = S.points.badges.filter((b) => b.earned).map((b) => b.id);
+    const badgeKey = `mahlzeit.badges.${S.code}`;
+    const seenBadges = JSON.parse(localStorage.getItem(badgeKey) ?? 'null');
+    const fresh = seenBadges ? S.points.badges.filter((b) => b.earned && !seenBadges.includes(b.id)) : [];
+    if (fresh.length && !quietPoints) toast(`Neues Abzeichen: ${fresh[0].emoji} ${fresh[0].name} (+${fresh[0].reward} 🥄)`);
+    localStorage.setItem(badgeKey, JSON.stringify(earnedIds));
 
     const key = `mahlzeit.level.${S.code}`;
     const stored = localStorage.getItem(key);
-    if (stored === null || level.index < Number(stored)) {
+    if (stored === null || level.index < Number(stored) || quietPoints) {
       localStorage.setItem(key, level.index);
     } else if (level.index > Number(stored) && !sheet.open) {
       localStorage.setItem(key, level.index);
       openLevelUp(level);
     }
+    quietPoints = false;
   }, 250);
 }
 
@@ -1041,6 +1449,8 @@ function openSettings() {
     </fieldset>
     <p class="muted setting-hint" id="diet-hint">${esc(currentDiet().hint)}</p>
     <p class="muted setting-hint">Gilt für euch beide. Die Löffel werden danach neu berechnet, das Level kann also sinken.</p>
+    <h3>Mein Fokus</h3>
+    <button class="btn" data-action="openFocus">⭐ Fokus-Nährstoffe und Präparate</button>
     <h3>Darstellung</h3>
     <fieldset class="segmented" aria-label="Darstellung auf diesem Gerät">
       ${[['auto', 'Auto'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([id, label]) => `<label class="accent"><input type="radio" name="theme" value="${id}" ${currentTheme() === id ? 'checked' : ''}><span>${label}</span></label>`).join('')}
@@ -1148,6 +1558,17 @@ async function loadDemo() {
   });
   wish('Ramen', b, a, 'Am liebsten dieses Wochenende!');
   wish('Lasagne', a, b, '', { status: 'planned', plannedDate: shift(2) });
+  ops.push({
+    type: 'set', col: 'plans', id: newId(),
+    data: {
+      dishId: ids['Pizza vom Blech'].id, dishName: 'Pizza vom Blech', dishEmoji: ids['Pizza vom Blech'].emoji,
+      date: shift(1), by: 'both', createdBy: a, createdAt: Date.now(),
+    },
+  });
+  ops.push({
+    type: 'set', col: 'quick', id: `${toISO(new Date())}_${b}`,
+    data: { date: toISO(new Date()), who: b, items: ['kiwi', 'walnuesse'], createdAt: Date.now() },
+  });
   await store.commit(code, ops);
   S.code = code;
   S.meId = a;
@@ -1232,6 +1653,67 @@ const actions = {
   },
   newCook: ({ dish }) => openCookForm({ dishId: dish }),
   newCookForDay: () => openCookForm({ date: S.day }),
+  newCookOn: ({ date }) => openCookForm({ date }),
+  editCook: ({ id }) => openCookEdit(id),
+  newPlan: ({ dish, date }) => openPlanDish({ dishId: dish, date }),
+  openPlan: ({ id }) => openPlanEntry(id),
+  cookPlan({ id }) {
+    const p = S.plans.find((x) => x.id === id);
+    openCookForm({
+      dishId: p.dishId, dishName: p.dishName, date: p.date <= today() ? p.date : today(), planId: id, by: p.by,
+    });
+  },
+  deletePlan({ id }) {
+    commit([{ type: 'delete', col: 'plans', id }]);
+    sheet.close();
+    toast('Plan entfernt.');
+  },
+  planToday({ id }) {
+    const dish = S.dishes.find((d) => d.id === id);
+    if (S.plans.some((p) => p.dishId === id && p.date === today())) {
+      toast('Steht schon im Plan.');
+      sheet.close();
+      return;
+    }
+    commit([{
+      type: 'set', col: 'plans', id: newId(),
+      data: {
+        dishId: id, dishName: dish.name, dishEmoji: dish.emoji, date: today(), by: S.meId, createdBy: S.meId, createdAt: Date.now(),
+      },
+    }]);
+    selectDay(today());
+    S.calView = 'month';
+    S.tab = 'calendar';
+    sheet.close();
+    render();
+    toast(`${dish.name} ist für heute geplant.`);
+  },
+  suggest: () => openSuggestion(),
+  suggestNext: () => openSuggestion(1),
+  openQuick: ({ date }) => openQuick(date ?? today()),
+  openFocus,
+  openBadges,
+  openRecap: ({ prefix }) => openRecap(prefix),
+  async shareRecap({ prefix }) {
+    const text = recapText(prefix);
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else {
+        await navigator.clipboard.writeText(text);
+        toast('In die Zwischenablage kopiert.');
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') toast('Teilen ging nicht.');
+    }
+  },
+  calView({ view }) {
+    S.calView = view;
+    render();
+  },
+  week({ step }) {
+    S.calWeek = addDays(S.calWeek, Number(step));
+    renderCalendar();
+  },
   confirmDeleteCook: ({ id }) => confirmSheet('Eintrag löschen?', 'Der Eintrag verschwindet aus dem Kalender.', 'Löschen', 'deleteCook', id),
   deleteCook({ id }) {
     commit([{ type: 'delete', col: 'cooked', id }]);
@@ -1266,6 +1748,7 @@ const actions = {
   },
   planWish: ({ id }) => openPlanForm(id),
   declineWish({ id }) {
+    if (S.wishes.find((w) => w.id === id)?.golden) return;
     commit([{ type: 'update', col: 'wishes', id, data: { status: 'declined', plannedDate: null, resolvedAt: Date.now() } }]);
   },
   confirmDeleteWish: ({ id }) => confirmSheet('Wunsch zurückziehen?', 'Der Wunsch wird für euch beide gelöscht.', 'Zurückziehen', 'deleteWish', id),
@@ -1391,12 +1874,70 @@ const forms = {
     toast('Rezept gespeichert.');
   },
   cook: saveCook,
+  cookEdit(form) {
+    const f = new FormData(form);
+    const { id } = form.dataset;
+    const log = S.cooked.find((c) => c.id === id);
+    const date = f.get('date');
+    commit([{
+      type: 'update', col: 'cooked', id,
+      data: {
+        date, by: f.get('by'), note: f.get('note').trim(), fromPlan: date === log.date ? Boolean(log.fromPlan) : false,
+      },
+    }]);
+    selectDay(date);
+    sheet.close();
+    if (S.tab === 'calendar') render();
+    toast(date === log.date ? 'Gespeichert.' : `Verschoben auf ${fmtDay(date)}.`);
+  },
+  planDish(form) {
+    const f = new FormData(form);
+    const date = f.get('date');
+    const ops = [];
+    const dish = resolveDish(f.get('dishName').trim(), null, ops);
+    ops.push({
+      type: 'set', col: 'plans', id: newId(),
+      data: {
+        dishId: dish.id, dishName: dish.name, dishEmoji: dish.emoji, date, by: f.get('by'), createdBy: S.meId, createdAt: Date.now(),
+      },
+    });
+    commit(ops);
+    selectDay(date);
+    sheet.close();
+    if (S.tab === 'calendar') render();
+    toast(`Eingeplant für ${fmtDay(date)}.`);
+  },
+  planEdit(form) {
+    const f = new FormData(form);
+    const date = f.get('date');
+    commit([{ type: 'update', col: 'plans', id: form.dataset.id, data: { date, by: f.get('by') } }]);
+    selectDay(date);
+    sheet.close();
+    if (S.tab === 'calendar') render();
+    toast(`Geplant für ${fmtDay(date)}.`);
+  },
+  quick(form) {
+    const f = new FormData(form);
+    const date = f.get('date');
+    const items = f.getAll('item');
+    const id = quickId(date);
+    if (items.length) {
+      commit([{
+        type: 'set', col: 'quick', id, data: {
+          date, who: S.meId, items, createdAt: Date.now(),
+        },
+      }]);
+    } else if (S.quick.some((q) => q.id === id)) {
+      commit([{ type: 'delete', col: 'quick', id }]);
+    }
+    sheet.close();
+    toast('Gespeichert.');
+  },
   wish: saveWish,
   plan(form) {
     const date = new FormData(form).get('date');
     commit([{ type: 'update', col: 'wishes', id: form.dataset.id, data: { status: 'planned', plannedDate: date } }]);
-    S.day = date;
-    S.month = new Date(fromISO(date).getFullYear(), fromISO(date).getMonth(), 1);
+    selectDay(date);
     sheet.close();
     toast(`Eingeplant für ${fmtDay(date)}.`);
   },
@@ -1437,7 +1978,16 @@ document.addEventListener('input', (e) => {
     if (target.name !== 'name' || target.form.dataset.touched) return;
     const match = target.form.querySelector(`input[name="emoji"][value="${guessEmoji(target.value)}"]`);
     if (match) match.checked = true;
+  } else if (target.matches('[data-quick-date]')) {
+    if (target.value) openQuick(target.value);
+  } else if (target.dataset.nutrient) {
+    const state = loadFocus();
+    if (target.value === 'normal') delete state[target.dataset.nutrient];
+    else state[target.dataset.nutrient] = target.value;
+    localStorage.setItem(focusKey(), JSON.stringify(state));
+    render();
   } else if (target.name === 'diet') {
+    quietPoints = true;
     store.updateHousehold(S.code, { diet: target.value }).catch(() => toast('Speichern hat nicht geklappt.'));
     $('#diet-hint', sheet).textContent = DIETS.find((d) => d.id === target.value).hint;
   } else if (target.name === 'theme') {

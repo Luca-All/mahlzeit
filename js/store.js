@@ -3,6 +3,8 @@
 import { firebaseConfig } from './config.js';
 
 const FIREBASE = 'https://www.gstatic.com/firebasejs/13.1.0';
+const COLLECTIONS = ['dishes', 'cooked', 'wishes', 'plans', 'quick'];
+export const DATA_SOURCES = ['household', ...COLLECTIONS];
 const CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // ohne 0/O und 1/I
 
 export const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 20);
@@ -53,7 +55,7 @@ async function createFirebaseStore() {
           if (snap.exists()) onChange('household', snap.data());
           else if (!snap.metadata.fromCache) onChange('household', null);
         }, onError),
-        ...['dishes', 'cooked', 'wishes'].map((col) => fs.onSnapshot(
+        ...COLLECTIONS.map((col) => fs.onSnapshot(
           fs.collection(db, 'households', code, col),
           (snap) => onChange(col, snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
           onError
@@ -89,7 +91,7 @@ function createDemoStore() {
   return {
     demo: true,
     getHousehold: async (code) => read(code)?.household ?? null,
-    createHousehold: async (code, household) => write(code, { household, dishes: {}, cooked: {}, wishes: {} }),
+    createHousehold: async (code, household) => write(code, { household }),
     async updateHousehold(code, patch) {
       const data = read(code);
       Object.assign(data.household, patch);
@@ -111,8 +113,8 @@ function createDemoStore() {
         const data = read(code);
         onChange('household', data?.household ?? null);
         if (!data) return;
-        for (const col of ['dishes', 'cooked', 'wishes']) {
-          onChange(col, Object.entries(data[col]).map(([id, d]) => ({ id, ...d })));
+        for (const col of COLLECTIONS) {
+          onChange(col, Object.entries(data[col] ?? {}).map(([id, d]) => ({ id, ...d })));
         }
       };
       listeners.add(emit);
@@ -122,6 +124,7 @@ function createDemoStore() {
     async commit(code, ops) {
       const data = read(code);
       for (const op of ops) {
+        data[op.col] ??= {};
         if (op.type === 'set') data[op.col][op.id] = op.data;
         if (op.type === 'update') Object.assign(data[op.col][op.id], op.data);
         if (op.type === 'delete') delete data[op.col][op.id];

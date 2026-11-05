@@ -1,9 +1,11 @@
 // Punkte ("Löffel") und Level. Alles wird aus den gespeicherten Einträgen berechnet und nirgends
 // abgelegt: Wird ein Eintrag gelöscht oder eine Regel geändert, stimmt der Stand automatisch.
 // Es gibt bewusst keine Minuspunkte.
+import { evaluateBadges } from './badges.js';
 import {
-  GROUPS, activeGroups, coreGroups, dishIngredients, guessIngredients, ingredient,
+  GROUPS, activeGroups, coreGroups, dishIngredients, guessIngredients, ingredient, isActiveIngredient,
 } from './nutrition.js';
+import { seasonalIngredients } from './season.js';
 import { addDays, fromISO, toISO, today } from './util.js';
 
 export const SOURCES = {
@@ -36,7 +38,11 @@ export const USAGE_RULES = {
   plan: 5,
   fulfil: 15,
   onTime: 5,
+  quick: 5,
 };
+
+// Ein Goldener Wunsch kann nicht abgelehnt werden. Bezahlt wird aus dem eigenen Anteil der Löffel.
+export const GOLDEN_WISH_COST = 300;
 
 export const BONUS = {
   legumes: 20,
@@ -83,20 +89,37 @@ export function levelFor(total) {
 
 export const weekStart = (iso) => addDays(iso, -((fromISO(iso).getDay() + 6) % 7));
 
-function groupsOfMeal(c, dishes) {
+function ingredientsOfMeal(c, dishes) {
   const dish = dishes.find((d) => d.id === c.dishId);
-  const ids = dish ? dishIngredients(dish) : guessIngredients(c.dishName ?? '');
-  return new Set(ids.map((id) => ingredient(id)?.group).filter(Boolean));
+  return dish ? dishIngredients(dish) : guessIngredients(c.dishName ?? '');
 }
 
 const dateOf = (ms) => toISO(new Date(ms));
 
-export function computePoints({ cooked, dishes, wishes }) {
+export function computePoints({
+  cooked, dishes, wishes, quick = [],
+}) {
   const now = today();
   const core = coreGroups().map((g) => g.id);
   const has = (id) => activeGroups().some((g) => g.id === id);
   const entries = [];
   const add = (date, points, label, who) => entries.push({ date, points, label, who });
+
+  const stats = {
+    mealDates: [],
+    dishDates: dishes.filter((d) => d.createdAt).map((d) => dateOf(d.createdAt)),
+    groupDays: new Map(),
+    plantDays: [],
+    paletteDates: [],
+    varietyDates: [],
+    seasonDates: [],
+    fulfilDates: [],
+    goldenDates: [],
+    onTimeDates: [],
+    quickDates: [],
+    entryDays: [],
+  };
+  const seenIngredients = new Set();
 
   const days = new Map();
   const weeks = new Map();
@@ -108,42 +131,71 @@ export function computePoints({ cooked, dishes, wishes }) {
     return weeks.get(key);
   };
 
-  const ordered = [...cooked].sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
-  for (const c of ordered) {
-    if (!days.has(c.date)) days.set(c.date, { dishes: new Set(), groups: new Set(), counted: 0 });
-    const day = days.get(c.date);
-    const week = weekOf(c.date);
-    const groups = groupsOfMeal(c, dishes);
+  const events = [
+    ...cooked.map((c) => ({ date: c.date, createdAt: c.createdAt ?? 0, meal: c, who: c.by })),
+    ...quick.map((q) => ({ date: q.date, createdAt: Infinity, quick: q, who: q.who })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
 
-    // Dasselbe Gericht am selben Tag zählt nur einmal, und pro Tag höchstens drei Mahlzeiten.
-    if (day.dishes.has(c.dishId)) continue;
-    day.dishes.add(c.dishId);
-    week.meals += 1;
-    if (groups.has('meat')) week.meatMeals += 1;
-    if (day.counted < USAGE_RULES.mealsPerDay) {
-      day.counted += 1;
-      add(c.date, USAGE_RULES.meal, `${c.dishName} eingetragen`, c.by);
+  for (const event of events) {
+    const { date, who } = event;
+    if (!days.has(date)) days.set(date, { dishes: new Set(), groups: new Set(), counted: 0 });
+    const day = days.get(date);
+    const week = weekOf(date);
+    const ids = event.meal ? ingredientsOfMeal(event.meal, dishes) : event.quick.items.filter(isActiveIngredient);
+    const groups = new Set(ids.map((id) => ingredient(id)?.group).filter(Boolean));
+
+    if (event.meal) {
+      const c = event.meal;
+      // Dasselbe Gericht am selben Tag zählt nur einmal, und pro Tag höchstens drei Mahlzeiten.
+      if (day.dishes.has(c.dishId)) continue;
+      day.dishes.add(c.dishId);
+      week.meals += 1;
+      if (groups.has('meat')) week.meatMeals += 1;
+      stats.mealDates.push(date);
+      const season = seasonalIngredients(fromISO(date).getMonth() + 1);
+      if (ids.some((id) => season.has(id))) stats.seasonDates.push(date);
+      if (day.counted < USAGE_RULES.mealsPerDay) {
+        day.counted += 1;
+        add(date, USAGE_RULES.meal, `${c.dishName} eingetragen`, who);
+      }
+      if (c.fromPlan) {
+        add(date, USAGE_RULES.onTime, 'Wie geplant gekocht', who);
+        stats.onTimeDates.push(date);
+      }
+    } else if (ids.length) {
+      add(date, USAGE_RULES.quick, 'Schnell-Eintrag', who);
+      stats.quickDates.push(date);
+    }
+
+    for (const id of ids) {
+      if (!seenIngredients.has(id)) {
+        seenIngredients.add(id);
+        stats.varietyDates.push(date);
+      }
     }
 
     for (const g of groups) {
       const rule = GROUP_RULES[g];
       if (!rule || day.groups.has(g)) continue;
       day.groups.add(g);
+      if (!stats.groupDays.has(g)) stats.groupDays.set(g, new Set());
+      stats.groupDays.get(g).add(date);
       if (g === 'fish') {
         week.fishDays += 1;
         if (week.fishDays > 2) continue;
       }
       if (g === 'seeds') {
         week.seedDays += 1;
-        if (!has('fish') && week.seedDays === SEED_DAYS_PER_WEEK) add(c.date, BONUS.seeds, 'Wochenziel Nüsse und Samen', c.by);
+        if (!has('fish') && week.seedDays === SEED_DAYS_PER_WEEK) add(date, BONUS.seeds, 'Wochenziel Nüsse und Samen', who);
       }
-      if (g === 'legumes' && !week.groups.has(g)) add(c.date, BONUS.legumes, 'Wochenziel Hülsenfrüchte', c.by);
-      if (g === 'fish' && !week.groups.has(g)) add(c.date, BONUS.fish, 'Wochenziel Fisch', c.by);
+      if (g === 'legumes' && !week.groups.has(g)) add(date, BONUS.legumes, 'Wochenziel Hülsenfrüchte', who);
+      if (g === 'fish' && !week.groups.has(g)) add(date, BONUS.fish, 'Wochenziel Fisch', who);
       week.groups.add(g);
-      add(c.date, rule.points, GROUPS.find((x) => x.id === g).label, c.by);
-      if (!week.palette && core.every((id) => week.groups.has(id))) {
+      add(date, rule.points, GROUPS.find((x) => x.id === g).label, who);
+      if (!week.palette && core.every((x) => week.groups.has(x))) {
         week.palette = true;
-        add(c.date, BONUS.palette, 'Volle Palette', 'both');
+        add(date, BONUS.palette, 'Volle Palette', 'both');
+        stats.paletteDates.push(date);
       }
     }
   }
@@ -167,6 +219,8 @@ export function computePoints({ cooked, dishes, wishes }) {
     previous = date;
     if (run % STREAK_LENGTH === 0) add(date, BONUS.streak, `${run} Tage Gemüse in Folge`, 'both');
   }
+  stats.plantDays = plantDays;
+  stats.entryDays = [...days.keys()].sort();
   // Heute darf noch fehlen: Die Serie reißt erst, wenn auch der Tag vorbei ist.
   const streak = previous && previous >= addDays(now, -1) ? run : 0;
 
@@ -176,13 +230,23 @@ export function computePoints({ cooked, dishes, wishes }) {
     const sameDay = wishesPerDay.get(created) ?? 0;
     wishesPerDay.set(created, sameDay + 1);
     if (sameDay < USAGE_RULES.wishesPerDay) add(created, USAGE_RULES.wish, `${w.dishName} gewünscht`, w.from);
+    if (w.golden) stats.goldenDates.push(created);
     if (w.plannedDate && w.status !== 'declined') add(created, USAGE_RULES.plan, `${w.dishName} eingeplant`, w.to);
     if (w.status === 'done') {
       const log = cooked.find((c) => c.id === w.cookedId);
       const date = log?.date ?? dateOf(w.resolvedAt ?? w.createdAt);
       add(date, USAGE_RULES.fulfil, `Wunsch erfüllt: ${w.dishName}`, w.to);
-      if (log && log.date === w.plannedDate) add(date, USAGE_RULES.onTime, 'Pünktlich wie geplant', w.to);
+      stats.fulfilDates.push(date);
+      if (log && log.date === w.plannedDate) {
+        add(date, USAGE_RULES.onTime, 'Pünktlich wie geplant', w.to);
+        stats.onTimeDates.push(date);
+      }
     }
+  }
+
+  const badges = evaluateBadges(stats);
+  for (const b of badges) {
+    if (b.earned) add(b.date, b.reward, `Abzeichen: ${b.name}`, 'both');
   }
 
   const total = entries.reduce((sum, e) => sum + e.points, 0);
@@ -220,5 +284,14 @@ export function computePoints({ cooked, dishes, wishes }) {
   ].filter(Boolean);
 
   entries.sort((a, b) => b.date.localeCompare(a.date));
-  return { total, byPerson, entries, level: levelFor(total), quests, streak };
+  return {
+    total, byPerson, entries, level: levelFor(total), quests, streak, badges,
+  };
+}
+
+// Was eine Person für Goldene Wünsche ausgeben kann. Das Level bleibt davon unberührt.
+export function wishBalance(points, wishes, personId) {
+  const earned = (points.byPerson[personId] ?? 0) + Math.floor((points.byPerson.both ?? 0) / 2);
+  const spent = wishes.filter((w) => w.golden && w.from === personId).reduce((sum) => sum + GOLDEN_WISH_COST, 0);
+  return earned - spent;
 }
