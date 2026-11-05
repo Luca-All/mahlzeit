@@ -18,6 +18,10 @@ Solange `firebaseConfig` in `js/config.js` auf `null` steht, läuft die App im D
 
 `js/nutrition.js` enthält den Katalog der wichtigen Lebensmittel mit ihren Nährstoffen. Ein Gericht ohne eigene Auswahl bekommt seine Zutaten aus Name, Notiz und weiteren Zutaten angenommen (gestrichelte Abzeichen). Sobald jemand die Auswahl ändert oder bestätigt, gilt sie fest. Der Ernährungs-Tab wertet die gekochten Gerichte der letzten 7 Tage aus. Erfasst wird nur, ob etwas vorkommt, nicht wie viel.
 
+## Löffel und Level
+
+`js/points.js` berechnet Punkte und Level bei jedem Rendern aus den Einträgen, gespeichert wird davon nichts. Grundlage sind die [WHO-Empfehlungen](https://www.who.int/news-room/fact-sheets/detail/healthy-diet), die [DGE-Empfehlungen](https://www.dge.de/gesunde-ernaehrung/gut-essen-und-trinken/dge-empfehlungen/) und das [EU Health Promotion Knowledge Gateway](https://knowledge-for-policy.ec.europa.eu/health-promotion-knowledge-gateway/whole-grain_en). Die Punktzahlen sind eine eigene Gewichtung.
+
 ## Lokal starten
 
 ```bash
@@ -32,6 +36,7 @@ Liegt der Ordner in iCloud Drive, kann Python ihn eventuell nicht lesen. Dann de
 - `js/store.js`: Datenschicht mit den Backends Firebase und Demo
 - `js/util.js`: Datum, Escaping, Emoji-Vorschläge
 - `js/nutrition.js`: Zutatenkatalog, Annahmen und Auswertung
+- `js/points.js`: Löffel, Wochenziele und Level
 - `sw.js`: Offline-Cache für die App-Dateien
 - `firestore.rules`: Zugriffsregeln
 

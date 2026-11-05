@@ -6,6 +6,9 @@ import {
   COMBOS, GROUPS, NUTRIENTS, TIPS, dishIngredients, groupsOf, guessForDish, guessIngredients,
   ingredient, ingredientsOfGroup, isAssumed, summarize,
 } from './nutrition.js';
+import {
+  BONUS, GROUP_RULES, LEVELS, SOURCES, USAGE_RULES, computePoints,
+} from './points.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -26,6 +29,7 @@ const S = {
   month: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   day: today(),
   wishTab: 'in',
+  points: null,
 };
 let store = null;
 let unsubscribe = null;
@@ -197,6 +201,7 @@ function renderFatal(text) {
 
 function enterHousehold() {
   unsubscribe?.();
+  lastTotal = null;
   S.household = null;
   S.shownTab = null;
   renderLoading();
@@ -234,6 +239,7 @@ function render() {
     return;
   }
   document.body.className = `accent-${me().color ?? 0}`;
+  S.points = computePoints(S);
   if (S.shownTab !== S.tab) {
     S.shownTab = S.tab;
     app.innerHTML = `<main id="view"></main><div id="fab-slot"></div><nav class="tabs" aria-label="Bereiche" id="tabs"></nav>`;
@@ -246,6 +252,10 @@ function render() {
   if (S.tab === 'nutrition') renderNutrition();
   renderTabs();
   renderFab();
+  document.querySelectorAll('.level-pill').forEach((el) => {
+    el.innerHTML = levelPill();
+  });
+  notePointsChange();
 }
 
 function renderTabs() {
@@ -268,10 +278,18 @@ function renderFab() {
   $('#fab-slot').innerHTML = html;
 }
 
+const levelPill = () => {
+  const p = S.points;
+  return p ? `<span aria-hidden="true">${p.level.emoji}</span> <span class="visually-hidden">Level </span>${p.level.number} · ${p.total.toLocaleString('de-DE')} 🥄` : '';
+};
+
 const topBar = (title) => `
   <header class="top">
     <h1>${esc(title)}</h1>
-    <button class="icon-btn" data-action="settings" aria-label="Einstellungen">${icon('gear')}</button>
+    <div class="top-actions">
+      <button class="level-pill" data-action="openPoints">${levelPill()}</button>
+      <button class="icon-btn" data-action="settings" aria-label="Einstellungen">${icon('gear')}</button>
+    </div>
   </header>`;
 
 /* ---------- Gerichte ---------- */
@@ -391,7 +409,7 @@ function openDishForm(id, presetName = '', preset = {}) {
 /* ---------- Zutaten und Abzeichen ---------- */
 
 function foodBadges(dish) {
-  const groups = groupsOf(dishIngredients(dish));
+  const groups = groupsOf(dishIngredients(dish)).filter((g) => !g.limit);
   if (!groups.length) return '';
   const assumed = isAssumed(dish);
   return `<span class="badges">${groups.map((g) => {
@@ -752,7 +770,7 @@ const lastSevenDays = () => Array.from({ length: 7 }, (_, i) => addDays(today(),
 function renderNutrition() {
   const dates = lastSevenDays();
   const { meals, groupDays, nutrients } = summarize(S.cooked, S.dishes, dates);
-  const core = GROUPS.filter((g) => !g.optional);
+  const core = GROUPS.filter((g) => !g.optional && !g.limit);
   const missing = core.filter((g) => !groupDays.get(g.id).size);
   const head = !meals
     ? '<strong>Noch nichts eingetragen</strong><p>In den letzten 7 Tagen gab es keine gekochten Gerichte.</p>'
@@ -763,7 +781,7 @@ function renderNutrition() {
     const days = groupDays.get(g.id);
     const dots = dates.map((d) => `<i class="${days.has(d) ? 'on' : ''}"></i>`).join('');
     const count = days.size ? `${days.size} von 7 Tagen` : 'Nicht dabei';
-    return `<li><button class="row group-row" data-action="openGroup" data-id="${g.id}">
+    return `<li><button class="row group-row ${g.limit ? 'limit' : ''}" data-action="openGroup" data-id="${g.id}">
       <span class="tile">${g.badge}</span>
       <span class="row-text"><b>${esc(g.label)}</b><small>${esc(count)} · ${esc(g.goal)}</small>
         <span class="dots" aria-hidden="true">${dots}</span></span>
@@ -775,6 +793,8 @@ function renderNutrition() {
 
   $('#view').innerHTML = `
     ${topBar('Ernährung')}
+    ${levelCard()}
+    ${questList()}
     <div class="nutrition-head">${head}</div>
     <ul class="list">${GROUPS.map(groupRow).join('')}</ul>
     <section class="nutrition-section">
@@ -817,6 +837,130 @@ function openGroup(id) {
     <h3>Das zählt dazu</h3>
     <ul class="history">${ingredientsOfGroup(id).map((i) => `<li><span>${esc(i.label)}</span><small class="muted">${esc(i.nutrients.join(', '))}</small></li>`).join('')}</ul>
     <div class="sheet-foot"><button class="btn quiet" data-action="closeSheet">Schließen</button></div>`);
+}
+
+/* ---------- Löffel und Level ---------- */
+
+function levelCard() {
+  const { level, total } = S.points;
+  const toGo = level.next ? `Noch ${(level.next.min - total).toLocaleString('de-DE')} 🥄 bis ${esc(level.next.name)}` : 'Höher geht es nicht.';
+  return `<button class="level-card" data-action="openPoints">
+    <span class="level-emoji" aria-hidden="true">${level.emoji}</span>
+    <span class="level-text">
+      <small>Level ${level.number} · ${total.toLocaleString('de-DE')} 🥄</small>
+      <b>${esc(level.name)}</b>
+      <span class="level-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(level.progress * 100)}" aria-label="Fortschritt zum nächsten Level"><i style="width:${level.progress * 100}%"></i></span>
+      <small>${toGo}</small>
+    </span>
+  </button>`;
+}
+
+function questList() {
+  return `<section class="quests"><h3>Wochenziele</h3><ul class="list">
+    ${S.points.quests.map((q) => `<li class="quest ${q.done ? 'done' : ''}">
+      <span class="tile" aria-hidden="true">${q.emoji}</span>
+      <span class="row-text"><b>${esc(q.name)}</b><small>${esc(q.goal)}</small><small class="quest-progress">${q.done ? '✓ ' : ''}${esc(q.progress)}</small></span>
+      <span class="reward">+${q.reward}</span>
+    </li>`).join('')}
+  </ul></section>`;
+}
+
+function openPoints() {
+  const { level, total, byPerson, entries } = S.points;
+  const sourceLinks = (keys) => keys.map((k) => `<a class="link" href="${SOURCES[k]}" target="_blank" rel="noopener noreferrer">${k}</a>`).join(' · ');
+  const contribution = Object.entries(members()).map(([id, m]) => `<span class="person p${m.color}">${esc(m.name)} ${(byPerson[id] ?? 0).toLocaleString('de-DE')}</span>`);
+  if (byPerson.both) contribution.push(`<span class="person both">Gemeinsam ${byPerson.both.toLocaleString('de-DE')}</span>`);
+
+  const usage = [
+    ['Mahlzeit eingetragen, bis zu 3 am Tag', USAGE_RULES.meal],
+    ['Wunsch geäußert, bis zu 3 am Tag', USAGE_RULES.wish],
+    ['Wunsch eingeplant', USAGE_RULES.plan],
+    ['Wunsch erfüllt', USAGE_RULES.fulfil],
+    ['Am geplanten Tag gekocht', USAGE_RULES.onTime],
+  ];
+  const groupRules = GROUPS.filter((g) => GROUP_RULES[g.id])
+    .sort((a, b) => GROUP_RULES[b.id].points - GROUP_RULES[a.id].points);
+
+  openSheet(`
+    <div class="sheet-head"><span class="tile big" aria-hidden="true">${level.emoji}</span>
+      <div><h2>${esc(level.name)}</h2><p class="muted">${esc(level.line)}</p></div></div>
+    <p class="points-total"><b>${total.toLocaleString('de-DE')} 🥄</b> <span class="muted">Level ${level.number} von ${LEVELS.length}</span></p>
+    <p class="contribution">${contribution.join(' ')}</p>
+
+    <details class="rules" open><summary>Alle Level</summary>
+      <ol class="ladder">${LEVELS.map((l, i) => `<li class="${i <= level.index ? 'reached' : ''} ${i === level.index ? 'current' : ''}">
+        <span aria-hidden="true">${i <= level.index ? l.emoji : '🔒'}</span>
+        <span class="row-text"><b>${i + 1}. ${esc(l.name)}</b></span>
+        <small>${l.min.toLocaleString('de-DE')}</small>
+      </li>`).join('')}</ol>
+    </details>
+
+    <details class="rules"><summary>So gibt es Löffel</summary>
+      <h3>Pro Tag, einmal je Bereich</h3>
+      <ul class="rule-list">${groupRules.map((g) => {
+    const r = GROUP_RULES[g.id];
+    return `<li><span class="reward">+${r.points}</span><span class="row-text"><b>${g.badge} ${esc(g.label)}</b><small>${esc(r.why)}</small>${r.sources.length ? `<small>${sourceLinks(r.sources)}</small>` : ''}</span></li>`;
+  }).join('')}</ul>
+      <h3>Fürs Benutzen</h3>
+      <ul class="rule-list">${usage.map(([label, points]) => `<li><span class="reward">+${points}</span><span class="row-text">${esc(label)}</span></li>`).join('')}</ul>
+      <h3>Wochenboni</h3>
+      <ul class="rule-list">
+        <li><span class="reward">+${BONUS.palette}</span><span class="row-text">Volle Palette: alle Bereiche in einer Woche</span></li>
+        <li><span class="reward">+${BONUS.streak}</span><span class="row-text">Je 7 Tage in Folge Gemüse oder Obst</span></li>
+        <li><span class="reward">+${BONUS.moderation}</span><span class="row-text"><span>Maßhalte-Medaille: höchstens 2× Fleisch pro Woche</span><small>DGE: höchstens 300 g pro Woche. Zwei Portionen zu 150 g sind eine Schätzung, weil die App keine Mengen kennt. WHO: besser pflanzliches Eiweiß statt rotem Fleisch. ${sourceLinks(['DGE', 'WHO'])}</small></span></li>
+        <li><span class="reward">+${BONUS.legumes}</span><span class="row-text">Bohnen-Pflicht: Hülsenfrüchte mindestens einmal pro Woche</span></li>
+        <li><span class="reward">+${BONUS.fish}</span><span class="row-text">Angelschein: Fisch mindestens einmal pro Woche</span></li>
+      </ul>
+      <p class="fineprint">Die Empfehlungen stammen von WHO, DGE und EU, die Punktzahlen sind eine eigene Gewichtung danach. Minuspunkte gibt es keine. Gezählt wird nur, ob etwas vorkommt, nicht die Menge. Das ersetzt keine Ernährungsberatung.</p>
+    </details>
+
+    ${entries.length ? `<details class="rules"><summary>Zuletzt verdient</summary>
+      <ul class="history">${entries.slice(0, 25).map((e) => `<li><span>${esc(fmtDay(e.date))} · ${esc(e.label)}</span><b>+${e.points}</b></li>`).join('')}</ul>
+    </details>` : ''}
+    <div class="sheet-foot"><button class="btn quiet" data-action="closeSheet">Schließen</button></div>`);
+}
+
+function openLevelUp(level) {
+  const food = ['🥦', '🫘', '🌾', '🍅', '🌰', '🥄', '🐟', '🍊'];
+  openSheet(`
+    <div class="level-up">
+      <div class="confetti" aria-hidden="true">${Array.from({ length: 24 }, (_, i) => `<i style="left:${(i * 37) % 100}%;animation-delay:${(i % 8) * 90}ms">${food[i % food.length]}</i>`).join('')}</div>
+      <span class="level-up-emoji" aria-hidden="true">${level.emoji}</span>
+      <p class="muted">Level ${level.number} erreicht</p>
+      <h2>${esc(level.name)}</h2>
+      <p class="muted">${esc(level.line)}</p>
+      <button class="btn primary" data-action="closeSheet">Weiter so</button>
+    </div>`);
+}
+
+let lastTotal = null;
+let pointsTimer = null;
+
+// Kurz warten: Bei Firebase kommt ein Eintrag als mehrere Snapshots an, das soll ein Pop sein.
+function notePointsChange() {
+  clearTimeout(pointsTimer);
+  pointsTimer = setTimeout(() => {
+    const { total, level } = S.points;
+    if (lastTotal !== null && total > lastTotal) showPointsPop(total - lastTotal);
+    lastTotal = total;
+
+    const key = `mahlzeit.level.${S.code}`;
+    const stored = localStorage.getItem(key);
+    if (stored === null || level.index < Number(stored)) {
+      localStorage.setItem(key, level.index);
+    } else if (level.index > Number(stored) && !sheet.open) {
+      localStorage.setItem(key, level.index);
+      openLevelUp(level);
+    }
+  }, 250);
+}
+
+function showPointsPop(amount) {
+  const el = $('#points-pop');
+  el.textContent = `+${amount} 🥄`;
+  el.classList.remove('show');
+  void el.offsetWidth; // Animation neu starten
+  el.classList.add('show');
 }
 
 /* ---------- Einstellungen und Bestätigungen ---------- */
@@ -957,6 +1101,7 @@ const actions = {
     openDishForm(null, name, { ingredients, note });
   },
   openGroup: ({ id }) => openGroup(id),
+  openPoints,
   confirmIngredients({ id }) {
     commit([{ type: 'update', col: 'dishes', id, data: { ingredients: guessForDish(S.dishes.find((d) => d.id === id)) } }]);
     openDish(id);

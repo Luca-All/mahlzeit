@@ -1,5 +1,5 @@
 // App-Shell offline verfügbar machen. Die Daten selbst cached Firestore.
-const CACHE = 'mahlzeit-v2';
+const CACHE = 'mahlzeit-v3';
 const SHELL = [
   './',
   'index.html',
@@ -9,6 +9,7 @@ const SHELL = [
   'js/store.js',
   'js/util.js',
   'js/nutrition.js',
+  'js/points.js',
   'js/config.js',
   'icons/icon-192.png',
   'icons/apple-touch-icon.png',

@@ -1,0 +1,210 @@
+// Punkte ("Löffel") und Level. Alles wird aus den gespeicherten Einträgen berechnet und nirgends
+// abgelegt: Wird ein Eintrag gelöscht oder eine Regel geändert, stimmt der Stand automatisch.
+// Es gibt bewusst keine Minuspunkte.
+import { GROUPS, dishIngredients, guessIngredients, ingredient } from './nutrition.js';
+import { addDays, fromISO, toISO, today } from './util.js';
+
+export const SOURCES = {
+  WHO: 'https://www.who.int/news-room/fact-sheets/detail/healthy-diet',
+  DGE: 'https://www.dge.de/gesunde-ernaehrung/gut-essen-und-trinken/dge-empfehlungen/',
+  EU: 'https://knowledge-for-policy.ec.europa.eu/health-promotion-knowledge-gateway/whole-grain_en',
+};
+
+// Die Empfehlungen selbst vergeben keine Punkte. Die Gewichtung ist eine eigene Einordnung:
+// Je klarer und häufiger WHO und DGE etwas empfehlen, desto mehr Löffel gibt es dafür.
+export const GROUP_RULES = {
+  greens: { points: 15, why: 'WHO: mindestens 400 g Gemüse und Obst am Tag. DGE: mindestens 5 Portionen.', sources: ['WHO', 'DGE'] },
+  veg: { points: 10, why: 'Zählt auf dieselben 400 g und 5 Portionen.', sources: ['WHO', 'DGE'] },
+  vitc: { points: 10, why: 'Zählt auf dieselben 400 g und 5 Portionen.', sources: ['WHO', 'DGE'] },
+  legumes: { points: 15, why: 'WHO: Kohlenhydrate vor allem aus Hülsenfrüchten, Vollkorn, Gemüse und Obst. DGE: mindestens einmal pro Woche.', sources: ['WHO', 'DGE'] },
+  grains: { points: 15, why: 'WHO: vorrangige Kohlenhydratquelle. DGE: die beste Wahl bei Getreide. EU: mit geringerem Risiko für nichtübertragbare Krankheiten verbunden.', sources: ['WHO', 'DGE', 'EU'] },
+  fish: { points: 15, why: 'DGE: ein- bis zweimal pro Woche, deshalb höchstens zwei Tage pro Woche. WHO: Quelle ungesättigter Fette.', sources: ['DGE', 'WHO'] },
+  seeds: { points: 10, why: 'DGE: täglich eine kleine Handvoll Nüsse, pflanzliche Öle bevorzugen. WHO: ungesättigte Fette bevorzugen.', sources: ['DGE', 'WHO'] },
+  animal: { points: 5, why: 'DGE: Milchprodukte jeden Tag. WHO zählt Käse aber zu den Quellen gesättigter Fette, darum weniger Löffel.', sources: ['DGE', 'WHO'] },
+  extras: { points: 3, why: 'Aus deiner persönlichen Liste, keine allgemeine WHO- oder DGE-Empfehlung.', sources: [] },
+};
+
+export const USAGE_RULES = {
+  meal: 10,
+  mealsPerDay: 3,
+  wish: 2,
+  wishesPerDay: 3,
+  plan: 5,
+  fulfil: 15,
+  onTime: 5,
+};
+
+export const BONUS = {
+  legumes: 20,
+  fish: 20,
+  palette: 50,
+  moderation: 30,
+  streak: 40,
+};
+
+const MEAT_MEALS_PER_WEEK = 2; // 300 g laut DGE, grob zwei Portionen zu 150 g
+const MIN_MEALS_FOR_MODERATION = 4;
+const STREAK_LENGTH = 7;
+const PLANT_GROUPS = ['greens', 'veg', 'vitc'];
+const CORE = GROUPS.filter((g) => !g.optional && !g.limit).map((g) => g.id);
+
+export const LEVELS = [
+  { min: 0, emoji: '📡', name: 'Mikrowellen-Stube', line: 'Die Mikrowelle kennt euch beim Vornamen.' },
+  { min: 100, emoji: '🥪', name: 'Toastbrot-Taverne', line: 'Immerhin ist schon etwas knusprig.' },
+  { min: 300, emoji: '💧', name: 'Nudelwasser-Akademie', line: 'Salzig wie das Mittelmeer, wie es sich gehört.' },
+  { min: 600, emoji: '🫘', name: 'Linsen-Liga', line: 'Ihr spielt jetzt in der Hülsenfrucht-Oberklasse.' },
+  { min: 1000, emoji: '🥦', name: 'Brokkoli-Bistro', line: 'Kleine Bäume, große Wirkung.' },
+  { min: 1600, emoji: '🧑‍🍳', name: 'Kichererbsen-Kollektiv', line: 'Basisdemokratisch und ballaststoffreich.' },
+  { min: 2400, emoji: '🌾', name: 'Vollkorn-Verein', line: 'Satzung, Paragraf 1: kein Weißmehl vor dem Vorstand.' },
+  { min: 3500, emoji: '🌰', name: 'Walnuss-Wirtshaus', line: 'Täglich eine Handvoll, die Stammgäste wissen das.' },
+  { min: 5000, emoji: '🎓', name: 'Feldsalat-Fakultät', line: 'Lehrstuhl für angewandte Vinaigrette.' },
+  { min: 7000, emoji: '🏰', name: 'Haferflocken-Hochburg', line: 'Uneinnehmbar, vor allem vor dem Frühstück.' },
+  { min: 9500, emoji: '👑', name: 'Spinat-Imperium', line: 'Das Eisen regiert.' },
+  { min: 13000, emoji: '🥄', name: 'Orden vom Goldenen Löffel', line: 'Wird nur an Menschen mit Saisonkalender verliehen.' },
+  { min: 18000, emoji: '⭐', name: 'Drei Sterne im Grünkohl-Guide', line: 'Die Testesser kamen und blieben.' },
+  { min: 25000, emoji: '🏛️', name: 'Olymp der Hülsenfrüchte', line: 'Von hier oben sieht man jede Linse.' },
+];
+
+export function levelFor(total) {
+  let index = 0;
+  LEVELS.forEach((l, i) => {
+    if (total >= l.min) index = i;
+  });
+  const level = LEVELS[index];
+  const next = LEVELS[index + 1] ?? null;
+  const progress = next ? (total - level.min) / (next.min - level.min) : 1;
+  return { ...level, index, number: index + 1, next, progress };
+}
+
+export const weekStart = (iso) => addDays(iso, -((fromISO(iso).getDay() + 6) % 7));
+
+function groupsOfMeal(c, dishes) {
+  const dish = dishes.find((d) => d.id === c.dishId);
+  const ids = dish ? dishIngredients(dish) : guessIngredients(c.dishName ?? '');
+  return new Set(ids.map((id) => ingredient(id)?.group).filter(Boolean));
+}
+
+const dateOf = (ms) => toISO(new Date(ms));
+
+export function computePoints({ cooked, dishes, wishes }) {
+  const now = today();
+  const entries = [];
+  const add = (date, points, label, who) => entries.push({ date, points, label, who });
+
+  const days = new Map();
+  const weeks = new Map();
+  const weekOf = (date) => {
+    const key = weekStart(date);
+    if (!weeks.has(key)) {
+      weeks.set(key, { start: key, meals: 0, meatMeals: 0, fishDays: 0, groups: new Set() });
+    }
+    return weeks.get(key);
+  };
+
+  const ordered = [...cooked].sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  for (const c of ordered) {
+    if (!days.has(c.date)) days.set(c.date, { dishes: new Set(), groups: new Set(), counted: 0 });
+    const day = days.get(c.date);
+    const week = weekOf(c.date);
+    const groups = groupsOfMeal(c, dishes);
+
+    // Dasselbe Gericht am selben Tag zählt nur einmal, und pro Tag höchstens drei Mahlzeiten.
+    if (day.dishes.has(c.dishId)) continue;
+    day.dishes.add(c.dishId);
+    week.meals += 1;
+    if (groups.has('meat')) week.meatMeals += 1;
+    if (day.counted < USAGE_RULES.mealsPerDay) {
+      day.counted += 1;
+      add(c.date, USAGE_RULES.meal, `${c.dishName} eingetragen`, c.by);
+    }
+
+    for (const g of groups) {
+      const rule = GROUP_RULES[g];
+      if (!rule || day.groups.has(g)) continue;
+      day.groups.add(g);
+      if (g === 'fish') {
+        week.fishDays += 1;
+        if (week.fishDays > 2) continue;
+      }
+      if (g === 'legumes' && !week.groups.has(g)) add(c.date, BONUS.legumes, 'Wochenziel Hülsenfrüchte', c.by);
+      if (g === 'fish' && !week.groups.has(g)) add(c.date, BONUS.fish, 'Wochenziel Fisch', c.by);
+      week.groups.add(g);
+      add(c.date, rule.points, GROUPS.find((x) => x.id === g).label, c.by);
+      if (!week.palette && CORE.every((id) => week.groups.has(id))) {
+        week.palette = true;
+        add(c.date, BONUS.palette, 'Volle Palette', 'both');
+      }
+    }
+  }
+
+  for (const week of weeks.values()) {
+    const end = addDays(week.start, 6);
+    // Erst nach Wochenende vergeben, sonst müsste ein spätes Schnitzel Punkte wieder wegnehmen.
+    if (end < now && week.meals >= MIN_MEALS_FOR_MODERATION && week.meatMeals <= MEAT_MEALS_PER_WEEK) {
+      add(end, BONUS.moderation, 'Maßhalte-Medaille', 'both');
+    }
+  }
+
+  const plantDays = [...days.entries()]
+    .filter(([, d]) => PLANT_GROUPS.some((g) => d.groups.has(g)))
+    .map(([date]) => date)
+    .sort();
+  let run = 0;
+  let previous = null;
+  for (const date of plantDays) {
+    run = previous && addDays(previous, 1) === date ? run + 1 : 1;
+    previous = date;
+    if (run % STREAK_LENGTH === 0) add(date, BONUS.streak, `${run} Tage Gemüse in Folge`, 'both');
+  }
+  // Heute darf noch fehlen: Die Serie reißt erst, wenn auch der Tag vorbei ist.
+  const streak = previous && previous >= addDays(now, -1) ? run : 0;
+
+  const wishesPerDay = new Map();
+  for (const w of wishes) {
+    const created = dateOf(w.createdAt);
+    const sameDay = wishesPerDay.get(created) ?? 0;
+    wishesPerDay.set(created, sameDay + 1);
+    if (sameDay < USAGE_RULES.wishesPerDay) add(created, USAGE_RULES.wish, `${w.dishName} gewünscht`, w.from);
+    if (w.plannedDate && w.status !== 'declined') add(created, USAGE_RULES.plan, `${w.dishName} eingeplant`, w.to);
+    if (w.status === 'done') {
+      const log = cooked.find((c) => c.id === w.cookedId);
+      const date = log?.date ?? dateOf(w.resolvedAt ?? w.createdAt);
+      add(date, USAGE_RULES.fulfil, `Wunsch erfüllt: ${w.dishName}`, w.to);
+      if (log && log.date === w.plannedDate) add(date, USAGE_RULES.onTime, 'Pünktlich wie geplant', w.to);
+    }
+  }
+
+  const total = entries.reduce((sum, e) => sum + e.points, 0);
+  const byPerson = {};
+  for (const e of entries) {
+    if (e.who === 'both') byPerson.both = (byPerson.both ?? 0) + e.points;
+    else byPerson[e.who] = (byPerson[e.who] ?? 0) + e.points;
+  }
+
+  const thisWeek = weeks.get(weekStart(now)) ?? { meals: 0, meatMeals: 0, fishDays: 0, groups: new Set() };
+  const quests = [
+    {
+      emoji: '🫘', name: 'Bohnen-Pflicht', goal: 'Mindestens einmal Hülsenfrüchte', reward: BONUS.legumes,
+      done: thisWeek.groups.has('legumes'), progress: thisWeek.groups.has('legumes') ? 'Geschafft' : 'Noch offen',
+    },
+    {
+      emoji: '🎣', name: 'Angelschein', goal: 'Einmal Fisch', reward: BONUS.fish,
+      done: thisWeek.groups.has('fish'), progress: thisWeek.groups.has('fish') ? 'Geschafft' : 'Noch offen',
+    },
+    {
+      emoji: '🎨', name: 'Volle Palette', goal: `Alle ${CORE.length} Bereiche in einer Woche`, reward: BONUS.palette,
+      done: Boolean(thisWeek.palette), progress: `${CORE.filter((id) => thisWeek.groups.has(id)).length} von ${CORE.length}`,
+    },
+    {
+      emoji: '⚖️', name: 'Maßhalte-Medaille', goal: `Höchstens ${MEAT_MEALS_PER_WEEK}× Fleisch bei mindestens ${MIN_MEALS_FOR_MODERATION} Mahlzeiten`, reward: BONUS.moderation,
+      done: false, progress: `${thisWeek.meatMeals}× Fleisch, ${thisWeek.meals} Mahlzeiten. Wertung nach dem Sonntag`,
+    },
+    {
+      emoji: '🔥', name: 'Gemüse-Serie', goal: `${STREAK_LENGTH} Tage in Folge Gemüse oder Obst`, reward: BONUS.streak,
+      done: streak > 0 && streak % STREAK_LENGTH === 0, progress: `Aktuell ${streak} ${streak === 1 ? 'Tag' : 'Tage'}`,
+    },
+  ];
+
+  entries.sort((a, b) => b.date.localeCompare(a.date));
+  return { total, byPerson, entries, level: levelFor(total), quests, streak };
+}

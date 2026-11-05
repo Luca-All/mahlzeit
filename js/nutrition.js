@@ -6,20 +6,26 @@ export const NUTRIENTS = ['Folat', 'Eisen', 'Zink', 'B1', 'B2', 'B6', 'B12', 'Om
 export const GROUPS = [
   { id: 'legumes', label: 'Hülsenfrüchte', badge: '🫘', goal: 'möglichst täglich' },
   { id: 'greens', label: 'Grünes Gemüse', badge: '🥦', goal: 'täglich' },
+  { id: 'veg', label: 'Buntes Gemüse und Obst', badge: '🍅', goal: 'zusammen mindestens 5 Portionen am Tag' },
   { id: 'vitc', label: 'Vitamin-C-Beilage', badge: '🍊', goal: 'verbessert die Eisenaufnahme' },
   { id: 'grains', label: 'Vollkorn', badge: '🌾', goal: 'statt Weißmehl' },
   { id: 'seeds', label: 'Nüsse, Samen, Öle', badge: '🌰', goal: 'pflanzliches Omega-3' },
+  { id: 'fish', label: 'Fisch', badge: '🐟', goal: 'ein- bis zweimal pro Woche' },
   { id: 'animal', label: 'Ei und Milchprodukte', badge: '🧀', goal: 'regelmäßig' },
   { id: 'extras', label: 'Extras', badge: '🍄', goal: 'gern dazu', optional: true },
+  // Zum Begrenzen statt zum Sammeln: bekommt kein Abzeichen und keine Punkte.
+  { id: 'meat', label: 'Fleisch und Wurst', badge: '🥩', goal: 'höchstens 300 g pro Woche', limit: true },
 ];
 
 const LEGUME = ['Folat', 'B1', 'B6', 'Eisen', 'Zink'];
 const GRAIN = ['B1', 'B6', 'Eisen', 'Zink'];
 const OMEGA = ['Omega-3'];
 const DAIRY = ['B12', 'B2'];
+const NOT_MEAT = /vegetar|vegan|veggie|fleischlos|sojahack|linsenhack/;
 
 // match prüft Name, Notiz und weitere Zutaten eines Gerichts. Enthält auch Gerichte, in denen
-// die Zutat üblicherweise steckt (Dal, Lasagne). unless blendet Treffer aus, die nur so aussehen.
+// die Zutat üblicherweise steckt (Dal, Lasagne). unless blendet Treffer aus, die nur so aussehen,
+// veto schließt die Zutat für den ganzen Text aus.
 export const INGREDIENTS = [
   { id: 'linsen', label: 'Linsen', group: 'legumes', nutrients: LEGUME, match: /linse|\bdal\b|\bdhal\b/ },
   { id: 'kichererbsen', label: 'Kichererbsen', group: 'legumes', nutrients: LEGUME, match: /kichererbse|hummus|falafel|\bchana\b/ },
@@ -35,6 +41,16 @@ export const INGREDIENTS = [
   { id: 'brokkoli', label: 'Brokkoli', group: 'greens', nutrients: ['Folat'], match: /brokkoli|broccoli/ },
   { id: 'rosenkohl', label: 'Rosenkohl', group: 'greens', nutrients: ['Folat'], match: /rosenkohl/ },
   { id: 'spargel', label: 'Spargel', group: 'greens', nutrients: ['Folat'], match: /spargel/ },
+
+  { id: 'tomaten', label: 'Tomaten', group: 'veg', nutrients: [], match: /tomate|passata|pizza|lasagne|bolognese|shakshuka|ratatouille|chili/ },
+  { id: 'karotten', label: 'Karotten', group: 'veg', nutrients: [], match: /karotte|möhre/ },
+  { id: 'zucchini', label: 'Zucchini, Aubergine', group: 'veg', nutrients: [], match: /zucchini|aubergine|ratatouille/ },
+  { id: 'kuerbis', label: 'Kürbis', group: 'veg', nutrients: [], match: /kürbis/, unless: /kürbiskern/g },
+  { id: 'blumenkohl', label: 'Blumenkohl', group: 'veg', nutrients: [], match: /blumenkohl/ },
+  { id: 'pilze', label: 'Pilze', group: 'veg', nutrients: [], match: /pilz|champignon/ },
+  { id: 'gemuese', label: 'Anderes Gemüse', group: 'veg', nutrients: [], match: /gemüse|\bwok\b/ },
+  { id: 'beeren', label: 'Beeren', group: 'veg', nutrients: [], match: /beere/ },
+  { id: 'obst', label: 'Anderes Obst', group: 'veg', nutrients: [], match: /\bapfel|\bbirne|banane|\bobst/ },
 
   { id: 'paprika', label: 'Paprika', group: 'vitc', nutrients: ['Vitamin C'], match: /paprika|shakshuka/, unless: /paprikapulver/g },
   { id: 'zitrus', label: 'Zitrusfrüchte', group: 'vitc', nutrients: ['Vitamin C'], match: /zitrone|zitrus|limette|orange|grapefruit/ },
@@ -56,6 +72,9 @@ export const INGREDIENTS = [
   { id: 'sonnenblumenkerne', label: 'Sonnenblumenkerne', group: 'seeds', nutrients: ['B1', 'B6', 'Folat'], match: /sonnenblumenkern/ },
   { id: 'oel', label: 'Lein-, Raps- oder Walnussöl', group: 'seeds', nutrients: OMEGA, match: /leinöl|rapsöl|walnussöl/ },
 
+  { id: 'fettfisch', label: 'Lachs, Hering, Makrele', group: 'fish', nutrients: ['Omega-3', 'B12', 'Vitamin D'], match: /lachs|hering|makrele|sardine/, unless: /seelachs/g },
+  { id: 'fisch', label: 'Anderer Fisch', group: 'fish', nutrients: ['B12'], match: /fisch|kabeljau|seelachs|forelle|scholle|dorade/ },
+
   { id: 'eier', label: 'Eier', group: 'animal', nutrients: DAIRY, match: /\bei\b|\beier\b|spiegelei|rührei|omelett|carbonara|shakshuka|tiramisu/ },
   { id: 'milch', label: 'Milch', group: 'animal', nutrients: DAIRY, match: /milch|b[eé]chamel|lasagne|gratin/, unless: /(kokos|hafer|mandel|soja)milch/g },
   { id: 'joghurt', label: 'Joghurt', group: 'animal', nutrients: DAIRY, match: /joghurt|jogurt|skyr|tzatziki|raita/ },
@@ -64,6 +83,11 @@ export const INGREDIENTS = [
   { id: 'hefeflocken', label: 'Hefeflocken mit B12', group: 'extras', nutrients: ['B1', 'B2', 'B6', 'B12'], match: /hefeflocken/ },
   // Bewusst nur mit "UV" im Text: Normale Champignons liefern dieses Vitamin D nicht.
   { id: 'uvpilze', label: 'UV-belichtete Champignons', group: 'extras', nutrients: ['Vitamin D'], match: /\buv\b.*champignon|uv-belichtet/ },
+
+  {
+    id: 'fleisch', label: 'Fleisch oder Wurst', group: 'meat', nutrients: [], veto: NOT_MEAT,
+    match: /fleisch|\brind|\bschwein|\blamm|\bhack|wurst|salami|schinken|speck|bolognese|gulasch|steak|schnitzel|burger|carbonara|flammkuchen|döner|hähnchen|\bhuhn|\bpute|chicken|chili con carne/,
+  },
 ];
 
 const BY_ID = new Map(INGREDIENTS.map((i) => [i.id, i]));
@@ -74,7 +98,7 @@ export const ingredientsOfGroup = (groupId) => INGREDIENTS.filter((i) => i.group
 export function guessIngredients(text) {
   const lower = text.toLowerCase();
   return INGREDIENTS
-    .filter((i) => i.match.test(i.unless ? lower.replace(i.unless, '') : lower))
+    .filter((i) => !i.veto?.test(lower) && i.match.test(i.unless ? lower.replace(i.unless, '') : lower))
     .map((i) => i.id);
 }
 
@@ -129,5 +153,6 @@ export const TIPS = [
   'Kaffee und Schwarztee mit etwa einer Stunde Abstand zu den Hauptmahlzeiten trinken.',
   'Paprika, Zitrus oder Kiwi dazu essen. Vitamin C verbessert die Eisenaufnahme.',
   'Leinöl nicht erhitzen, es gehört in den Salat.',
-  'Jodsalz statt normalem Salz verwenden.',
+  'Jodsalz statt normalem Salz verwenden, und insgesamt weniger als 5 g Salz am Tag (WHO).',
+  'Freien Zucker unter 50 g am Tag halten, dazu zählen auch Honig, Sirup und Saft (WHO).',
 ];
