@@ -72,7 +72,26 @@ body.accent-1 { --accent: var(--p1); }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Nur Wischen, kein Zoom per Pinch oder Doppeltipp. */
+html, body, #sheet { touch-action: pan-x pan-y; }
+
 html { -webkit-text-size-adjust: 100%; }
+
+/* iOS legt in installierten Web-Apps eine Unschärfe über den oberen Rand.
+   WebKit lässt sie weg, wenn dort ein deckendes fixed-Element liegt. */
+.top-edge { display: none; }
+@media (display-mode: standalone) {
+  .top-edge {
+    display: block;
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 8;
+    height: max(var(--safe-t), 12px);
+    background: var(--bg);
+    pointer-events: none;
+    transition: background-color 0.2s;
+  }
+}
 
 body {
   margin: 0;

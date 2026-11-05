@@ -2003,6 +2003,11 @@ document.addEventListener('input', (e) => {
 
 /* ---------- Start ---------- */
 
+// iOS ignoriert user-scalable=no, Pinch-Zoom lässt sich dort nur über die Gesten-Events abfangen.
+['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => {
+  document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+});
+
 async function boot() {
   syncThemeColor();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
