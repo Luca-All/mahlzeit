@@ -25,7 +25,21 @@
 </head>
 <body>
   <div class="top-edge" aria-hidden="true"></div>
-  <div id="app"></div>
+  <div id="app">
+    <main class="splash" role="status" aria-label="Mahlzeit lädt">
+      <svg class="splash-icon" viewBox="0 0 512 512" aria-hidden="true">
+        <rect width="512" height="512" rx="112" fill="#C2412A"/>
+        <g class="splash-steam" fill="none" stroke="#FFF6EA" stroke-width="24" stroke-linecap="round">
+          <path d="M196 140c-20 24 20 44 0 68"/>
+          <path d="M256 118c-20 26 20 52 0 78"/>
+          <path d="M316 140c-20 24 20 44 0 68"/>
+        </g>
+        <path d="M104 248h304c0 84-56 140-124 148v14h-56v-14c-68-8-124-64-124-148Z" fill="#FFF6EA"/>
+      </svg>
+      <p class="splash-name">Mahlzeit</p>
+      <p class="splash-wait">Der Topf braucht noch einen Moment …</p>
+    </main>
+  </div>
   <dialog id="sheet" aria-label="Details"></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="points-pop" aria-hidden="true"></div>

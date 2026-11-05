@@ -356,6 +356,43 @@ legend { padding: 0; margin-bottom: 6px; }
 .hint p { margin-top: 4px; }
 .demo-note { color: var(--muted); font-size: 14px; text-align: center; }
 
+/* ---------- Ladebildschirm ---------- */
+
+.splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--safe-t) calc(var(--safe-r) + 24px) var(--safe-b) calc(var(--safe-l) + 24px);
+  text-align: center;
+}
+.splash-icon {
+  width: 112px;
+  height: 112px;
+  filter: drop-shadow(0 12px 24px rgb(194 65 42 / 0.28));
+}
+.splash-steam path { animation: steam 2.4s ease-in-out infinite; }
+.splash-steam path:nth-child(1) { animation-delay: -1.6s; }
+.splash-steam path:nth-child(2) { animation-delay: -0.8s; }
+.splash-steam path:nth-child(3) { animation-delay: 0s; }
+@keyframes steam {
+  0% { transform: translateY(20px); opacity: 0; }
+  35%, 60% { opacity: 1; }
+  100% { transform: translateY(-20px); opacity: 0; }
+}
+.splash-name { margin-top: 20px; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
+/* Kommt erst, wenn es wirklich dauert. Bei normalem Start blitzt kein Text auf. */
+.splash-wait {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 15px;
+  opacity: 0;
+  animation: splash-wait 0.4s ease-out 4s forwards;
+}
+@keyframes splash-wait { to { opacity: 1; } }
+
 /* ---------- Kalender ---------- */
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
@@ -472,12 +509,28 @@ legend { padding: 0; margin-bottom: 6px; }
   overscroll-behavior: contain;
 }
 #sheet[open] { animation: rise 0.22s ease-out; }
-#sheet::backdrop { background: var(--backdrop); }
+#sheet::backdrop { background: var(--backdrop); opacity: var(--sheet-fade, 1); }
+#sheet.settling { transition: transform 0.2s ease-out; }
+#sheet.settling::backdrop { transition: opacity 0.2s ease-out; }
 @keyframes rise { from { transform: translateY(32px); opacity: 0; } }
 
-.sheet-body { padding: 8px calc(var(--safe-r) + 18px) calc(var(--safe-b) + 18px) calc(var(--safe-l) + 18px); }
+/* Bleibt beim Scrollen oben sichtbar. touch-action: none, damit das Ziehen nicht als Scrollen gilt. */
+.sheet-grip {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 0 21px;
+  background: var(--sheet);
+  box-shadow: inset 0 1px 0 var(--edge);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sheet-grip:active { cursor: grabbing; }
+.sheet-body { padding: 0 calc(var(--safe-r) + 18px) calc(var(--safe-b) + 18px) calc(var(--safe-l) + 18px); }
 .grabber:focus { outline: none; }
-.grabber { width: 38px; height: 5px; margin: 0 auto 14px; border-radius: 3px; background: var(--line); }
+.grabber { width: 38px; height: 5px; margin: 0 auto; border-radius: 3px; background: var(--line); }
 #sheet h2 { margin-bottom: 14px; font-size: 22px; font-weight: 700; overflow-wrap: anywhere; }
 #sheet h3 { margin: 20px 0 8px; font-size: 15px; font-weight: 650; color: var(--muted); }
 .sheet-body > p { margin-bottom: 12px; }
@@ -942,7 +995,9 @@ legend { padding: 0; margin-bottom: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .splash-steam path { animation: none; }
   #sheet[open] { animation: none; }
+  #sheet.settling, #sheet.settling::backdrop { transition: none; }
   .suggest-emoji { animation: none; }
   #toast { transition: none; }
   .confetti { display: none; }

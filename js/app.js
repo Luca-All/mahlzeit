@@ -18,6 +18,7 @@ import { rankDishes } from './suggest.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
+const LOADING_HTML = app.innerHTML; // Der Ladebildschirm steht in index.html, damit er vor dem JS sichtbar ist.
 const sheet = $('#sheet');
 const SESSION_KEY = 'mahlzeit.session';
 
@@ -242,7 +243,8 @@ function renderCodeReveal() {
 }
 
 function renderLoading() {
-  app.innerHTML = '<main class="onboard"><p class="lead" aria-busy="true">Einen Moment …</p></main>';
+  // Läuft er schon, nicht neu setzen, sonst springt die Animation.
+  if (!app.querySelector('.splash')) app.innerHTML = LOADING_HTML;
 }
 
 function renderFatal(text) {
@@ -1507,10 +1509,70 @@ function confirmSheet(title, text, label, action, id = '') {
 
 function openSheet(html) {
   // Fokus auf den Griff: Sonst springt beim Öffnen sofort Tastatur oder Datumsrad auf.
-  sheet.innerHTML = `<div class="sheet-body"><div class="grabber" tabindex="-1" autofocus aria-hidden="true"></div>${html}</div>`;
+  resetSheetDrag();
+  sheet.innerHTML = `<div class="sheet-grip"><div class="grabber" tabindex="-1" autofocus aria-hidden="true"></div></div><div class="sheet-body">${html}</div>`;
   if (!sheet.open) sheet.showModal();
   sheet.scrollTop = 0;
 }
+
+// Am Griff nach unten ziehen schließt das Sheet: ab 100 px oder mit einem schnellen Wisch.
+const SHEET_CLOSE_DISTANCE = 100;
+const SHEET_CLOSE_SPEED = 0.5; // px pro ms
+const SHEET_SETTLE_MS = 200;
+let sheetDrag = null;
+let sheetSettle = null;
+
+function resetSheetDrag() {
+  clearTimeout(sheetSettle);
+  sheetDrag = null;
+  sheet.classList.remove('settling');
+  sheet.style.removeProperty('transform');
+  sheet.style.removeProperty('--sheet-fade');
+}
+
+function settleSheet(close) {
+  sheet.classList.add('settling');
+  sheet.style.transform = close ? 'translateY(100%)' : '';
+  sheet.style.setProperty('--sheet-fade', close ? '0' : '1');
+  const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  sheetSettle = setTimeout(() => {
+    if (close) sheet.close();
+    resetSheetDrag();
+  }, instant ? 0 : SHEET_SETTLE_MS);
+}
+
+sheet.addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('.sheet-grip');
+  if (!grip || sheet.classList.contains('settling')) return;
+  grip.setPointerCapture(e.pointerId);
+  sheetDrag = { id: e.pointerId, startY: e.clientY, y: e.clientY, t: e.timeStamp, speed: 0 };
+});
+
+sheet.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== sheetDrag?.id) return;
+  const elapsed = e.timeStamp - sheetDrag.t;
+  if (elapsed > 0) sheetDrag.speed = (e.clientY - sheetDrag.y) / elapsed;
+  sheetDrag.y = e.clientY;
+  sheetDrag.t = e.timeStamp;
+  const offset = Math.max(0, e.clientY - sheetDrag.startY);
+  sheet.style.transform = `translateY(${offset}px)`;
+  sheet.style.setProperty('--sheet-fade', String(Math.max(0, 1 - offset / sheet.offsetHeight)));
+});
+
+sheet.addEventListener('pointerup', (e) => {
+  if (e.pointerId !== sheetDrag?.id) return;
+  const offset = e.clientY - sheetDrag.startY;
+  // Wer vor dem Loslassen kurz innehält, hat nicht mehr gewischt.
+  const flicked = offset > 10 && sheetDrag.speed > SHEET_CLOSE_SPEED && e.timeStamp - sheetDrag.t < 100;
+  sheetDrag = null;
+  settleSheet(offset > SHEET_CLOSE_DISTANCE || flicked);
+});
+
+sheet.addEventListener('pointercancel', (e) => {
+  if (e.pointerId !== sheetDrag?.id) return;
+  sheetDrag = null;
+  settleSheet(false);
+});
 
 /* ---------- Beispieldaten für den Demo-Modus ---------- */
 
