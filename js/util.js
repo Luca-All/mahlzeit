@@ -69,3 +69,62 @@ export function guessEmoji(name) {
   const lower = name.toLowerCase();
   return EMOJI_HINTS.find(([re]) => re.test(lower))?.[1] ?? '🍽️';
 }
+
+/* ---------- Rezept-Links ---------- */
+
+const RECIPE_SITES = [
+  ['chefkoch.de', 'Chefkoch'],
+  ['kitchenstories.com', 'Kitchen Stories'],
+  ['lecker.de', 'LECKER'],
+  ['eatsmarter.de', 'EAT SMARTER'],
+  ['essen-und-trinken.de', 'essen & trinken'],
+  ['kochbar.de', 'kochbar'],
+  ['gutekueche.de', 'GuteKüche'],
+  ['gutekueche.at', 'GuteKüche'],
+  ['ichkoche.at', 'ichkoche'],
+  ['rewe.de', 'REWE'],
+  ['cookidoo.de', 'Cookidoo'],
+  ['hellofresh.de', 'HelloFresh'],
+  ['youtube.com', 'YouTube', true],
+  ['youtu.be', 'YouTube', true],
+  ['instagram.com', 'Instagram', true],
+  ['tiktok.com', 'TikTok', true],
+  ['pinterest.de', 'Pinterest', true],
+  ['pinterest.com', 'Pinterest', true],
+];
+
+// Apps teilen oft "Titel https://…", und von Hand fehlt gern das https://.
+export function parseRecipeUrl(input) {
+  const text = input.trim();
+  if (!text) return null;
+  const embedded = text.match(/https?:\/\/[^\s<>"]+/i)?.[0];
+  let candidate = embedded;
+  if (!candidate) {
+    if (/\s/.test(text) || !text.includes('.') || /^[a-z][a-z0-9+.-]*:/i.test(text)) return null;
+    candidate = `https://${text}`;
+  }
+  try {
+    const url = new URL(candidate.replace(/[).,;!]+$/, ''));
+    return /^https?:$/.test(url.protocol) && url.hostname.includes('.') ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+// Titel und Quelle kommen nur aus der Adresse. Die Seite selbst wird nicht aufgerufen.
+export function describeRecipeUrl(href) {
+  const url = new URL(href);
+  const host = url.hostname.replace(/^www\./, '');
+  const site = RECIPE_SITES.find(([domain]) => host === domain || host.endsWith(`.${domain}`));
+  const source = site?.[1] ?? host;
+  if (site?.[2]) return { source, title: '' };
+  const segment = url.pathname.split('/').filter(Boolean).pop() ?? '';
+  let slug = segment;
+  try {
+    slug = decodeURIComponent(segment);
+  } catch { /* kaputte Kodierung: dann bleibt es beim Rohtext */ }
+  slug = slug.replace(/\.[a-z0-9]{2,5}$/i, '');
+  if (!/[-_]/.test(slug) || !/[a-zäöüß]{3}/i.test(slug)) return { source, title: '' };
+  const words = slug.replace(/[-_]+/g, ' ').trim();
+  return { source, title: words.charAt(0).toUpperCase() + words.slice(1) };
+}

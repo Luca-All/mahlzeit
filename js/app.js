@@ -1,6 +1,6 @@
 import { createStore, newCode, newId, normalizeCode, formatCode } from './store.js';
 import {
-  esc, toISO, fromISO, today, addDays, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
+  esc, toISO, fromISO, today, addDays, parseRecipeUrl, describeRecipeUrl, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
 } from './util.js';
 import {
   DIETS, GROUPS, NUTRIENTS, TIPS, activeCombos, activeGroups, conflictingIngredients, coreGroups, currentDiet,
@@ -44,6 +44,8 @@ const personClass = (id) => (id === 'both' ? 'both' : `p${members()[id]?.color ?
 const personName = (id) => (id === 'both' ? 'Zusammen' : members()[id]?.name || 'Jemand');
 const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const findDishByName = (name) => S.dishes.find((d) => sameName(d.name, name));
+// Früher gab es nur ein Feld "link". Geteilte Daten können alles enthalten, deshalb wird hier geprüft.
+const dishLinks = (d) => (d?.links ?? (d?.link ? [d.link] : [])).map(parseRecipeUrl).filter(Boolean);
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 
@@ -88,6 +90,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="m15 5-7 7 7 7"/>',
   next: '<path d="m9 5 7 7-7 7"/>',
+  external: '<path d="M14 5h5v5M19 5l-8 8M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
 };
 const icon = (name) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -351,7 +354,6 @@ function openDish(id) {
   const d = S.dishes.find((x) => x.id === id);
   if (!d) return;
   const logs = S.cooked.filter((c) => c.dishId === id).sort((a, b) => b.date.localeCompare(a.date));
-  const safeLink = /^https?:\/\//i.test(d.link ?? '') ? d.link : '';
   const friend = other();
   openSheet(`
     <div class="sheet-head">
@@ -364,7 +366,7 @@ function openDish(id) {
     </dl>
     ${dishIngredientsSection(d)}
     ${d.note ? `<p class="note">${esc(d.note)}</p>` : ''}
-    ${safeLink ? `<p><a class="link" href="${esc(safeLink)}" target="_blank" rel="noopener noreferrer">Rezept öffnen</a></p>` : ''}
+    ${recipeSection(d)}
     <div class="stack">
       <button class="btn primary" data-action="newCook" data-dish="${esc(d.id)}">Gekocht eintragen</button>
       ${friend ? `<button class="btn" data-action="newWish" data-dish="${esc(d.id)}">Von ${esc(friend.name)} wünschen</button>` : ''}
@@ -398,8 +400,10 @@ function openDishForm(id, presetName = '', preset = {}) {
       ${ingredientFields(selected, !chosen)}
       <label class="field"><span>Weitere Zutaten (optional)</span>
         <input name="otherIngredients" maxlength="300" placeholder="Hackfleisch, Tomaten, Basilikum" value="${esc(d?.otherIngredients)}"></label>
-      <label class="field"><span>Rezept-Link (optional)</span>
-        <input name="link" type="url" inputmode="url" placeholder="https://" value="${esc(d?.link)}"></label>
+      <div class="field"><span>Rezept-Links (optional)</span>
+        <div class="link-rows" id="link-rows">${(dishLinks(d).length ? dishLinks(d) : ['']).map(linkRow).join('')}</div>
+        <button class="btn small add-link" type="button" data-action="addLinkRow">Weiteren Link</button>
+      </div>
       <p class="error" id="dish-error" hidden></p>
       <button class="btn primary">Speichern</button>
       ${d ? `<button class="btn danger" type="button" data-action="confirmDeleteDish" data-id="${esc(d.id)}">Gericht löschen</button>` : ''}
@@ -478,6 +482,46 @@ function syncAssumedIngredients(form) {
   refreshIngredientCounts(form);
 }
 
+/* ---------- Rezept-Links ---------- */
+
+const LINK_INPUT_ATTRS = 'type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" maxlength="2000"';
+
+function linkRow(url = '') {
+  return `<div class="link-row">
+    <input name="links" ${LINK_INPUT_ATTRS} aria-label="Rezept-Link" placeholder="chefkoch.de/rezepte/…" value="${esc(url)}">
+    <button class="icon-btn" type="button" data-action="removeLinkRow" aria-label="Link entfernen">×</button>
+  </div>`;
+}
+
+function recipeSection(d) {
+  const links = dishLinks(d);
+  return `<section class="recipes">
+    <h3>Rezepte</h3>
+    ${links.length ? `<ul class="recipe-list">${links.map((href) => {
+    const { source, title } = describeRecipeUrl(href);
+    return `<li><a class="recipe-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">
+        <span class="row-text"><b>${esc(title || source)}</b>${title ? `<small>${esc(source)}</small>` : ''}</span>
+        ${icon('external')}
+      </a></li>`;
+  }).join('')}</ul>` : ''}
+    <button class="btn small add-link" data-action="addLink" data-id="${esc(d.id)}">${links.length ? 'Weiteren Link hinzufügen' : 'Rezept-Link hinzufügen'}</button>
+  </section>`;
+}
+
+function openAddLink(id) {
+  const d = S.dishes.find((x) => x.id === id);
+  openSheet(`
+    <h2>Rezept zu ${esc(d.name)}</h2>
+    <form class="stack" data-form="addLink" data-id="${esc(id)}">
+      <label class="field"><span>Link</span>
+        <input name="url" required ${LINK_INPUT_ATTRS} placeholder="chefkoch.de/rezepte/…"></label>
+      <p class="muted setting-hint">Kopier den Link aus Chefkoch, Kitchen Stories oder von jeder anderen Seite und füg ihn hier ein.</p>
+      <p class="error" id="link-error" hidden></p>
+      <button class="btn primary">Hinzufügen</button>
+      <button class="btn quiet" type="button" data-action="openDish" data-id="${esc(id)}">Zurück</button>
+    </form>`);
+}
+
 /* ---------- Gericht-Auswahl (Eintragen und Wünschen) ---------- */
 
 function dishPicker(value = '') {
@@ -537,7 +581,7 @@ function saveCook(form) {
   const wish = S.wishes.find((w) => w.id === form.dataset.wish);
   if (!dish) {
     dish = {
-      id: newId(), name, emoji: wish?.dishEmoji ?? guessEmoji(name), note: '', link: '',
+      id: newId(), name, emoji: wish?.dishEmoji ?? guessEmoji(name), note: '', links: [],
       createdBy: S.meId, createdAt: Date.now(),
     };
     const { id, ...data } = dish;
@@ -999,7 +1043,7 @@ function openSettings() {
     <p class="muted setting-hint">Gilt für euch beide. Die Löffel werden danach neu berechnet, das Level kann also sinken.</p>
     <h3>Darstellung</h3>
     <fieldset class="segmented" aria-label="Darstellung auf diesem Gerät">
-      ${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([id, label]) => `<label class="accent"><input type="radio" name="theme" value="${id}" ${currentTheme() === id ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+      ${[['auto', 'Auto'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([id, label]) => `<label class="accent"><input type="radio" name="theme" value="${id}" ${currentTheme() === id ? 'checked' : ''}><span>${label}</span></label>`).join('')}
     </fieldset>
     <h3>Küchen-Code</h3>
     <p class="muted">${friend ? `Du teilst diese Küche mit ${esc(friend.name)}. Mit dem Code kommst du auch auf einem neuen Handy wieder rein, heb ihn also gut auf.` : 'Mit diesem Code kommt die zweite Person dazu.'}</p>
@@ -1087,7 +1131,7 @@ async function loadDemo() {
     const id = newId();
     const emoji = guessEmoji(name);
     ids[name] = { id, emoji };
-    ops.push({ type: 'set', col: 'dishes', id, data: { name, emoji, note, link: '', createdBy: a, createdAt: Date.now() } });
+    ops.push({ type: 'set', col: 'dishes', id, data: { name, emoji, note, links: [], createdBy: a, createdAt: Date.now() } });
     for (const [days, by] of logs) {
       ops.push({
         type: 'set', col: 'cooked', id: newId(),
@@ -1151,6 +1195,16 @@ const actions = {
   },
   openDish: ({ id }) => openDish(id),
   newDish: ({ name }) => openDishForm(null, name ?? ''),
+  addLink: ({ id }) => openAddLink(id),
+  addLinkRow() {
+    $('#link-rows', sheet).insertAdjacentHTML('beforeend', linkRow());
+    $('#link-rows .link-row:last-child input', sheet).focus();
+  },
+  removeLinkRow(_, el) {
+    const rows = $('#link-rows', sheet);
+    if (rows.children.length > 1) el.closest('.link-row').remove();
+    else $('input', rows).value = '';
+  },
   addCombo({ name }) {
     const { ingredients, note } = activeCombos().find((c) => c.name === name);
     openDishForm(null, name, { ingredients, note });
@@ -1158,7 +1212,10 @@ const actions = {
   openGroup: ({ id }) => openGroup(id),
   openPoints,
   confirmIngredients({ id }) {
-    commit([{ type: 'update', col: 'dishes', id, data: { ingredients: dishIngredients(S.dishes.find((d) => d.id === id)) } }]);
+    const dish = S.dishes.find((d) => d.id === id);
+    const data = { ingredients: dishIngredients(dish) };
+    commit([{ type: 'update', col: 'dishes', id, data }]);
+    Object.assign(dish, data); // Bei Firebase kommt der Snapshot erst nach dem Neuzeichnen
     openDish(id);
     toast('Zutaten bestätigt.');
   },
@@ -1296,18 +1353,42 @@ const forms = {
       error.hidden = false;
       return;
     }
+    const rawLinks = f.getAll('links').filter((l) => l.trim());
+    const links = [...new Set(rawLinks.map(parseRecipeUrl))];
+    if (links.includes(null)) {
+      const error = $('#dish-error', form);
+      error.textContent = `„${rawLinks.find((l) => !parseRecipeUrl(l))}“ ist kein gültiger Link.`;
+      error.hidden = false;
+      return;
+    }
     const otherIngredients = f.get('otherIngredients').trim();
     // null heißt: weiter annehmen. Was bei "Weitere Zutaten" steht, zählt auch bei eigener Auswahl.
     const ingredients = form.dataset.ingTouched
       ? [...new Set([...f.getAll('ing'), ...guessIngredients(otherIngredients)])]
       : null;
     const data = {
-      name, emoji: f.get('emoji') ?? '🍽️', note: f.get('note').trim(), link: f.get('link').trim(), otherIngredients, ingredients,
+      name, emoji: f.get('emoji') ?? '🍽️', note: f.get('note').trim(), links, otherIngredients, ingredients,
     };
     if (id) commit([{ type: 'update', col: 'dishes', id, data }]);
     else commit([{ type: 'set', col: 'dishes', id: newId(), data: { ...data, createdBy: S.meId, createdAt: Date.now() } }]);
     sheet.close();
     toast(id ? 'Gespeichert.' : `${name} ist dabei.`);
+  },
+  addLink(form) {
+    const url = parseRecipeUrl(new FormData(form).get('url'));
+    if (!url) {
+      const error = $('#link-error', form);
+      error.textContent = 'Das sieht nicht nach einem Link aus.';
+      error.hidden = false;
+      return;
+    }
+    const { id } = form.dataset;
+    const dish = S.dishes.find((d) => d.id === id);
+    const data = { links: [...new Set([...dishLinks(dish), url])] };
+    commit([{ type: 'update', col: 'dishes', id, data }]);
+    Object.assign(dish, data); // Bei Firebase kommt der Snapshot erst nach dem Neuzeichnen
+    openDish(id);
+    toast('Rezept gespeichert.');
   },
   cook: saveCook,
   wish: saveWish,

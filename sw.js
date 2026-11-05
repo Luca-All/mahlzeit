@@ -1,5 +1,5 @@
 // App-Shell offline verfügbar machen. Die Daten selbst cached Firestore.
-const CACHE = 'mahlzeit-v4';
+const CACHE = 'mahlzeit-v5';
 const SHELL = [
   './',
   'index.html',
