@@ -3,6 +3,24 @@
 
 export const NUTRIENTS = ['Folat', 'Eisen', 'Zink', 'B1', 'B2', 'B6', 'B12', 'Omega-3', 'Vitamin C', 'Vitamin D'];
 
+export const DIETS = [
+  { id: 'omni', label: 'Alles', hint: 'Alle Bereiche zählen, auch Fisch und das Maßhalten bei Fleisch.', hidden: ['fortified'] },
+  { id: 'pesc', label: 'Pescetarisch', hint: 'Fleisch und das Maßhalte-Ziel fallen weg.', hidden: ['meat', 'fortified'] },
+  { id: 'veggie', label: 'Vegetarisch', hint: 'Fleisch und Fisch fallen weg. Dafür gibt es ein Wochenziel für Nüsse und Samen.', hidden: ['meat', 'fish', 'fortified'] },
+  { id: 'vegan', label: 'Vegan', hint: 'Fleisch, Fisch, Ei und Milchprodukte fallen weg. Dafür zählen angereicherte Alternativen und Nüsse und Samen.', hidden: ['meat', 'fish', 'animal'] },
+];
+
+let diet = DIETS[0];
+
+// Gilt für die ganze Küche, weil ihr gemeinsam esst und ein gemeinsames Level habt.
+export function setDiet(id) {
+  diet = DIETS.find((d) => d.id === id) ?? DIETS[0];
+}
+export const currentDiet = () => diet;
+const isHidden = (groupId) => diet.hidden.includes(groupId);
+export const activeGroups = () => GROUPS.filter((g) => !isHidden(g.id));
+export const coreGroups = () => activeGroups().filter((g) => !g.optional && !g.limit);
+
 export const GROUPS = [
   { id: 'legumes', label: 'Hülsenfrüchte', badge: '🫘', goal: 'möglichst täglich' },
   { id: 'greens', label: 'Grünes Gemüse', badge: '🥦', goal: 'täglich' },
@@ -12,6 +30,7 @@ export const GROUPS = [
   { id: 'seeds', label: 'Nüsse, Samen, Öle', badge: '🌰', goal: 'pflanzliches Omega-3' },
   { id: 'fish', label: 'Fisch', badge: '🐟', goal: 'ein- bis zweimal pro Woche' },
   { id: 'animal', label: 'Ei und Milchprodukte', badge: '🧀', goal: 'regelmäßig' },
+  { id: 'fortified', label: 'Angereicherte Alternativen', badge: '🌱', goal: 'Calcium, Jod, B2 und B12 im Blick' },
   { id: 'extras', label: 'Extras', badge: '🍄', goal: 'gern dazu', optional: true },
   // Zum Begrenzen statt zum Sammeln: bekommt kein Abzeichen und keine Punkte.
   { id: 'meat', label: 'Fleisch und Wurst', badge: '🥩', goal: 'höchstens 300 g pro Woche', limit: true },
@@ -33,6 +52,7 @@ export const INGREDIENTS = [
   { id: 'weissebohnen', label: 'Weiße Bohnen', group: 'legumes', nutrients: LEGUME, match: /wei(ß|ss)e bohne|cannellini/ },
   { id: 'erbsen', label: 'Erbsen', group: 'legumes', nutrients: LEGUME, match: /erbse/, unless: /kichererbse/g },
   { id: 'edamame', label: 'Edamame', group: 'legumes', nutrients: LEGUME, match: /edamame/ },
+  { id: 'tofu', label: 'Tofu, Tempeh', group: 'legumes', nutrients: ['Eisen', 'Zink'], match: /tofu|tempeh/ },
 
   { id: 'feldsalat', label: 'Feldsalat', group: 'greens', nutrients: ['Folat', 'Eisen'], match: /feldsalat/ },
   { id: 'spinat', label: 'Spinat', group: 'greens', nutrients: ['Folat', 'Eisen'], match: /spinat/ },
@@ -77,8 +97,11 @@ export const INGREDIENTS = [
 
   { id: 'eier', label: 'Eier', group: 'animal', nutrients: DAIRY, match: /\bei\b|\beier\b|spiegelei|rührei|omelett|carbonara|shakshuka|tiramisu/ },
   { id: 'milch', label: 'Milch', group: 'animal', nutrients: DAIRY, match: /milch|b[eé]chamel|lasagne|gratin/, unless: /(kokos|hafer|mandel|soja)milch/g },
-  { id: 'joghurt', label: 'Joghurt', group: 'animal', nutrients: DAIRY, match: /joghurt|jogurt|skyr|tzatziki|raita/ },
+  { id: 'joghurt', label: 'Joghurt', group: 'animal', nutrients: DAIRY, match: /joghurt|jogurt|skyr|tzatziki|raita/, unless: /(soja|hafer|kokos|mandel)-?jog?hurt/g },
   { id: 'kaese', label: 'Käse', group: 'animal', nutrients: [...DAIRY, 'Zink'], match: /käse|parmesan|mozzarella|feta|gouda|halloumi|ricotta|cheddar|lasagne|pizza|carbonara|gratin/ },
+
+  { id: 'pflanzendrink', label: 'Angereicherter Pflanzendrink', group: 'fortified', nutrients: ['B2', 'B12'], match: /(soja|hafer|mandel)-?(milch|drink)|pflanzendrink/ },
+  { id: 'pflanzenjoghurt', label: 'Sojajoghurt', group: 'fortified', nutrients: ['B2', 'B12'], match: /(soja|hafer|kokos|mandel)-?jog?hurt/ },
 
   { id: 'hefeflocken', label: 'Hefeflocken mit B12', group: 'extras', nutrients: ['B1', 'B2', 'B6', 'B12'], match: /hefeflocken/ },
   // Bewusst nur mit "UV" im Text: Normale Champignons liefern dieses Vitamin D nicht.
@@ -94,19 +117,24 @@ const BY_ID = new Map(INGREDIENTS.map((i) => [i.id, i]));
 
 export const ingredient = (id) => BY_ID.get(id);
 export const ingredientsOfGroup = (groupId) => INGREDIENTS.filter((i) => i.group === groupId);
+const isActive = (id) => !isHidden(BY_ID.get(id)?.group);
 
-export function guessIngredients(text) {
+function guessAll(text) {
   const lower = text.toLowerCase();
   return INGREDIENTS
     .filter((i) => !i.veto?.test(lower) && i.match.test(i.unless ? lower.replace(i.unless, '') : lower))
     .map((i) => i.id);
 }
 
+export const guessIngredients = (text) => guessAll(text).filter(isActive);
+
 const dishText = (dish) => [dish.name, dish.note, dish.otherIngredients].filter(Boolean).join(' ');
 
 // Ohne eigene Auswahl gilt die Annahme. So bekommen auch ältere Gerichte Abzeichen.
 export const isAssumed = (dish) => !dish.ingredients;
-export const dishIngredients = (dish) => dish.ingredients ?? guessIngredients(dishText(dish));
+export const dishIngredients = (dish) => (dish.ingredients ?? guessAll(dishText(dish))).filter(isActive);
+// Was im Gericht steckt, aber nicht zur gewählten Ernährungsweise passt.
+export const conflictingIngredients = (dish) => (dish.ingredients ?? guessAll(dishText(dish))).filter((id) => !isActive(id));
 export const guessForDish = (dish) => guessIngredients(dishText(dish));
 
 export function groupsOf(ids) {
@@ -141,11 +169,17 @@ export const COMBOS = [
     name: 'Haferflocken-Frühstück',
     note: 'Mit Weizenkeimen, Leinsamen, Walnüssen, Joghurt und Kiwi.',
     ingredients: ['haferflocken', 'weizenkeime', 'leinsamen', 'walnuesse', 'joghurt', 'kiwi'],
+    vegan: {
+      note: 'Mit Weizenkeimen, Leinsamen, Walnüssen, Sojajoghurt und Kiwi.',
+      ingredients: ['haferflocken', 'weizenkeime', 'leinsamen', 'walnuesse', 'pflanzenjoghurt', 'kiwi'],
+    },
   },
   { name: 'Linsen-Dal mit Spinat', note: '', ingredients: ['linsen', 'spinat'] },
   { name: 'Kichererbsen-Bowl mit Paprika und Feldsalat', note: '', ingredients: ['kichererbsen', 'paprika', 'feldsalat'] },
   { name: 'Vollkornpasta mit Brokkoli und Hefeflocken', note: '', ingredients: ['vollkornpasta', 'brokkoli', 'hefeflocken'] },
 ];
+
+export const activeCombos = () => COMBOS.map((c) => (diet.id === 'vegan' && c.vegan ? { ...c, ...c.vegan } : c));
 
 export const TIPS = [
   'Gemüse dämpfen statt lange kochen, damit das Folat erhalten bleibt, und täglich etwas roh essen.',

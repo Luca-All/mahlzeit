@@ -41,6 +41,7 @@ async function createFirebaseStore() {
       return snap.exists() ? snap.data() : null;
     },
     createHousehold: (code, data) => fs.setDoc(householdRef(code), data),
+    updateHousehold: (code, patch) => fs.updateDoc(householdRef(code), patch),
     addMember: (code, id, member) => fs.updateDoc(householdRef(code), { [`members.${id}`]: member }),
     updateMember: (code, id, patch) => fs.updateDoc(householdRef(code), Object.fromEntries(
       Object.entries(patch).map(([k, v]) => [`members.${id}.${k}`, v])
@@ -89,6 +90,11 @@ function createDemoStore() {
     demo: true,
     getHousehold: async (code) => read(code)?.household ?? null,
     createHousehold: async (code, household) => write(code, { household, dishes: {}, cooked: {}, wishes: {} }),
+    async updateHousehold(code, patch) {
+      const data = read(code);
+      Object.assign(data.household, patch);
+      write(code, data);
+    },
     async addMember(code, id, member) {
       const data = read(code);
       data.household.members[id] = member;

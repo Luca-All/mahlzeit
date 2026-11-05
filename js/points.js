@@ -1,13 +1,16 @@
 // Punkte ("Löffel") und Level. Alles wird aus den gespeicherten Einträgen berechnet und nirgends
 // abgelegt: Wird ein Eintrag gelöscht oder eine Regel geändert, stimmt der Stand automatisch.
 // Es gibt bewusst keine Minuspunkte.
-import { GROUPS, dishIngredients, guessIngredients, ingredient } from './nutrition.js';
+import {
+  GROUPS, activeGroups, coreGroups, dishIngredients, guessIngredients, ingredient,
+} from './nutrition.js';
 import { addDays, fromISO, toISO, today } from './util.js';
 
 export const SOURCES = {
   WHO: 'https://www.who.int/news-room/fact-sheets/detail/healthy-diet',
   DGE: 'https://www.dge.de/gesunde-ernaehrung/gut-essen-und-trinken/dge-empfehlungen/',
   EU: 'https://knowledge-for-policy.ec.europa.eu/health-promotion-knowledge-gateway/whole-grain_en',
+  B12: 'https://www.dge.de/gesunde-ernaehrung/faq/vitamin-b12/',
 };
 
 // Die Empfehlungen selbst vergeben keine Punkte. Die Gewichtung ist eine eigene Einordnung:
@@ -21,6 +24,7 @@ export const GROUP_RULES = {
   fish: { points: 15, why: 'DGE: ein- bis zweimal pro Woche, deshalb höchstens zwei Tage pro Woche. WHO: Quelle ungesättigter Fette.', sources: ['DGE', 'WHO'] },
   seeds: { points: 10, why: 'DGE: täglich eine kleine Handvoll Nüsse, pflanzliche Öle bevorzugen. WHO: ungesättigte Fette bevorzugen.', sources: ['DGE', 'WHO'] },
   animal: { points: 5, why: 'DGE: Milchprodukte jeden Tag. WHO zählt Käse aber zu den Quellen gesättigter Fette, darum weniger Löffel.', sources: ['DGE', 'WHO'] },
+  fortified: { points: 5, why: 'DGE: Bei pflanzlichen Alternativen auf Calcium, Jod, B2 und B12 achten.', sources: ['DGE'] },
   extras: { points: 3, why: 'Aus deiner persönlichen Liste, keine allgemeine WHO- oder DGE-Empfehlung.', sources: [] },
 };
 
@@ -37,6 +41,7 @@ export const USAGE_RULES = {
 export const BONUS = {
   legumes: 20,
   fish: 20,
+  seeds: 20,
   palette: 50,
   moderation: 30,
   streak: 40,
@@ -45,8 +50,8 @@ export const BONUS = {
 const MEAT_MEALS_PER_WEEK = 2; // 300 g laut DGE, grob zwei Portionen zu 150 g
 const MIN_MEALS_FOR_MODERATION = 4;
 const STREAK_LENGTH = 7;
+const SEED_DAYS_PER_WEEK = 3;
 const PLANT_GROUPS = ['greens', 'veg', 'vitc'];
-const CORE = GROUPS.filter((g) => !g.optional && !g.limit).map((g) => g.id);
 
 export const LEVELS = [
   { min: 0, emoji: '📡', name: 'Mikrowellen-Stube', line: 'Die Mikrowelle kennt euch beim Vornamen.' },
@@ -88,6 +93,8 @@ const dateOf = (ms) => toISO(new Date(ms));
 
 export function computePoints({ cooked, dishes, wishes }) {
   const now = today();
+  const core = coreGroups().map((g) => g.id);
+  const has = (id) => activeGroups().some((g) => g.id === id);
   const entries = [];
   const add = (date, points, label, who) => entries.push({ date, points, label, who });
 
@@ -96,7 +103,7 @@ export function computePoints({ cooked, dishes, wishes }) {
   const weekOf = (date) => {
     const key = weekStart(date);
     if (!weeks.has(key)) {
-      weeks.set(key, { start: key, meals: 0, meatMeals: 0, fishDays: 0, groups: new Set() });
+      weeks.set(key, { start: key, meals: 0, meatMeals: 0, fishDays: 0, seedDays: 0, groups: new Set() });
     }
     return weeks.get(key);
   };
@@ -126,11 +133,15 @@ export function computePoints({ cooked, dishes, wishes }) {
         week.fishDays += 1;
         if (week.fishDays > 2) continue;
       }
+      if (g === 'seeds') {
+        week.seedDays += 1;
+        if (!has('fish') && week.seedDays === SEED_DAYS_PER_WEEK) add(c.date, BONUS.seeds, 'Wochenziel Nüsse und Samen', c.by);
+      }
       if (g === 'legumes' && !week.groups.has(g)) add(c.date, BONUS.legumes, 'Wochenziel Hülsenfrüchte', c.by);
       if (g === 'fish' && !week.groups.has(g)) add(c.date, BONUS.fish, 'Wochenziel Fisch', c.by);
       week.groups.add(g);
       add(c.date, rule.points, GROUPS.find((x) => x.id === g).label, c.by);
-      if (!week.palette && CORE.every((id) => week.groups.has(id))) {
+      if (!week.palette && core.every((id) => week.groups.has(id))) {
         week.palette = true;
         add(c.date, BONUS.palette, 'Volle Palette', 'both');
       }
@@ -140,7 +151,7 @@ export function computePoints({ cooked, dishes, wishes }) {
   for (const week of weeks.values()) {
     const end = addDays(week.start, 6);
     // Erst nach Wochenende vergeben, sonst müsste ein spätes Schnitzel Punkte wieder wegnehmen.
-    if (end < now && week.meals >= MIN_MEALS_FOR_MODERATION && week.meatMeals <= MEAT_MEALS_PER_WEEK) {
+    if (has('meat') && end < now && week.meals >= MIN_MEALS_FOR_MODERATION && week.meatMeals <= MEAT_MEALS_PER_WEEK) {
       add(end, BONUS.moderation, 'Maßhalte-Medaille', 'both');
     }
   }
@@ -181,21 +192,24 @@ export function computePoints({ cooked, dishes, wishes }) {
     else byPerson[e.who] = (byPerson[e.who] ?? 0) + e.points;
   }
 
-  const thisWeek = weeks.get(weekStart(now)) ?? { meals: 0, meatMeals: 0, fishDays: 0, groups: new Set() };
+  const thisWeek = weeks.get(weekStart(now)) ?? { meals: 0, meatMeals: 0, fishDays: 0, seedDays: 0, groups: new Set() };
   const quests = [
     {
       emoji: '🫘', name: 'Bohnen-Pflicht', goal: 'Mindestens einmal Hülsenfrüchte', reward: BONUS.legumes,
       done: thisWeek.groups.has('legumes'), progress: thisWeek.groups.has('legumes') ? 'Geschafft' : 'Noch offen',
     },
-    {
+    has('fish') ? {
       emoji: '🎣', name: 'Angelschein', goal: 'Einmal Fisch', reward: BONUS.fish,
       done: thisWeek.groups.has('fish'), progress: thisWeek.groups.has('fish') ? 'Geschafft' : 'Noch offen',
+    } : {
+      emoji: '🐿️', name: 'Nussknacker', goal: `An ${SEED_DAYS_PER_WEEK} Tagen Nüsse, Samen oder gutes Öl`, reward: BONUS.seeds,
+      done: thisWeek.seedDays >= SEED_DAYS_PER_WEEK, progress: `${Math.min(thisWeek.seedDays, SEED_DAYS_PER_WEEK)} von ${SEED_DAYS_PER_WEEK} Tagen`,
     },
     {
-      emoji: '🎨', name: 'Volle Palette', goal: `Alle ${CORE.length} Bereiche in einer Woche`, reward: BONUS.palette,
-      done: Boolean(thisWeek.palette), progress: `${CORE.filter((id) => thisWeek.groups.has(id)).length} von ${CORE.length}`,
+      emoji: '🎨', name: 'Volle Palette', goal: `Alle ${core.length} Bereiche in einer Woche`, reward: BONUS.palette,
+      done: Boolean(thisWeek.palette), progress: `${core.filter((id) => thisWeek.groups.has(id)).length} von ${core.length}`,
     },
-    {
+    has('meat') && {
       emoji: '⚖️', name: 'Maßhalte-Medaille', goal: `Höchstens ${MEAT_MEALS_PER_WEEK}× Fleisch bei mindestens ${MIN_MEALS_FOR_MODERATION} Mahlzeiten`, reward: BONUS.moderation,
       done: false, progress: `${thisWeek.meatMeals}× Fleisch, ${thisWeek.meals} Mahlzeiten. Wertung nach dem Sonntag`,
     },
@@ -203,7 +217,7 @@ export function computePoints({ cooked, dishes, wishes }) {
       emoji: '🔥', name: 'Gemüse-Serie', goal: `${STREAK_LENGTH} Tage in Folge Gemüse oder Obst`, reward: BONUS.streak,
       done: streak > 0 && streak % STREAK_LENGTH === 0, progress: `Aktuell ${streak} ${streak === 1 ? 'Tag' : 'Tage'}`,
     },
-  ];
+  ].filter(Boolean);
 
   entries.sort((a, b) => b.date.localeCompare(a.date));
   return { total, byPerson, entries, level: levelFor(total), quests, streak };

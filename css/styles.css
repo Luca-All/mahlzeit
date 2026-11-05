@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #F7F3EC;
   --card: #FFFFFF;
   --sunken: #EEE8DD;
@@ -10,6 +10,11 @@
   --p1: #17756C;
   --on-accent: #FFFFFF;
   --danger: #B3261E;
+  --sheet: var(--bg);
+  --backdrop: rgb(0 0 0 / 0.42);
+  --edge: transparent;
+  --tint: 7%;
+  --fab-shadow: 0 6px 18px rgb(0 0 0 / 0.22);
   --accent: var(--p0);
   --radius: 16px;
   --tabs-h: 62px;
@@ -17,18 +22,44 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
+/* Dunkel steht zweimal: einmal für die feste Wahl, einmal für "Automatisch". */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14110E;
+  --card: #211C17;
+  --sunken: #2F2820;
+  --ink: #F7F0E6;
+  --muted: #B8AB9C;
+  --line: #3B332A;
+  --p0: #FF9D7C;
+  --p1: #63D8CA;
+  --on-accent: #1A120C;
+  --danger: #FFABA2;
+  --sheet: #1B1713;
+  --backdrop: rgb(0 0 0 / 0.66);
+  --edge: rgb(255 255 255 / 0.06);
+  --tint: 18%;
+  --fab-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1C1916;
-    --card: #28231F;
-    --sunken: #322C27;
-    --ink: #F3EDE5;
-    --muted: #AEA295;
-    --line: #3C352F;
-    --p0: #F2906F;
-    --p1: #62CBBF;
-    --on-accent: #1C1916;
-    --danger: #F2A29B;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #14110E;
+    --card: #211C17;
+    --sunken: #2F2820;
+    --ink: #F7F0E6;
+    --muted: #B8AB9C;
+    --line: #3B332A;
+    --p0: #FF9D7C;
+    --p1: #63D8CA;
+    --on-accent: #1A120C;
+    --danger: #FFABA2;
+    --sheet: #1B1713;
+    --backdrop: rgb(0 0 0 / 0.66);
+    --edge: rgb(255 255 255 / 0.06);
+    --tint: 18%;
+    --fab-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 38%, transparent);
   }
 }
 
@@ -49,6 +80,7 @@ body {
   font-size: 16px;
   line-height: 1.4;
   overscroll-behavior-y: none;
+  transition: background-color 0.2s;
 }
 
 h1, h2, h3, p { margin: 0; }
@@ -104,6 +136,9 @@ button { cursor: pointer; }
   height: calc(var(--tabs-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   background: var(--card);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   border-top: 1px solid var(--line);
 }
 .tabs button {
@@ -152,7 +187,7 @@ button { cursor: pointer; }
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 700;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 0.22);
+  box-shadow: var(--fab-shadow);
 }
 
 /* ---------- Bausteine ---------- */
@@ -407,13 +442,14 @@ legend { padding: 0; margin-bottom: 6px; }
   padding: 0;
   border: 0;
   border-radius: 22px 22px 0 0;
-  background: var(--bg);
+  background: var(--sheet);
+  box-shadow: inset 0 1px 0 var(--edge);
   color: var(--ink);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 #sheet[open] { animation: rise 0.22s ease-out; }
-#sheet::backdrop { background: rgb(0 0 0 / 0.42); }
+#sheet::backdrop { background: var(--backdrop); }
 @keyframes rise { from { transform: translateY(32px); opacity: 0; } }
 
 .sheet-body { padding: 8px 18px calc(var(--safe-b) + 18px); }
@@ -598,6 +634,7 @@ legend { padding: 0; margin-bottom: 6px; }
   border: 1.5px solid var(--accent);
   border-radius: var(--radius);
   background: var(--card);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) var(--tint), var(--card)), var(--card) 70%);
   text-align: left;
 }
 .level-emoji { flex: none; font-size: 40px; line-height: 1; }
@@ -676,6 +713,22 @@ legend { padding: 0; margin-bottom: 6px; }
   80% { opacity: 1; }
   100% { opacity: 0; transform: translateY(-8px); }
 }
+
+/* ---------- Einstellungen und Ernährungsweise ---------- */
+
+.row, .entry, .day, .quest, .wish, .stats div, .level-pill { box-shadow: inset 0 0 0 1px var(--edge); }
+.segmented label.accent { --person: var(--accent); }
+.segmented.two label { flex: 1 1 45%; }
+.setting-hint { margin-top: 8px; font-size: 13px; }
+.diet-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  font-size: 14px;
+}
+.diet-note b { font-weight: 650; }
 
 /* ---------- Hinweis-Toast ---------- */
 

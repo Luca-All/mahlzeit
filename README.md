@@ -22,6 +22,10 @@ Solange `firebaseConfig` in `js/config.js` auf `null` steht, läuft die App im D
 
 `js/points.js` berechnet Punkte und Level bei jedem Rendern aus den Einträgen, gespeichert wird davon nichts. Grundlage sind die [WHO-Empfehlungen](https://www.who.int/news-room/fact-sheets/detail/healthy-diet), die [DGE-Empfehlungen](https://www.dge.de/gesunde-ernaehrung/gut-essen-und-trinken/dge-empfehlungen/) und das [EU Health Promotion Knowledge Gateway](https://knowledge-for-policy.ec.europa.eu/health-promotion-knowledge-gateway/whole-grain_en). Die Punktzahlen sind eine eigene Gewichtung.
 
+## Einstellungen
+
+Die Ernährungsweise (`diet` im Küchen-Dokument) gilt für die ganze Küche und blendet in `js/nutrition.js` Bereiche aus, die dann auch keine Punkte mehr geben. Die Darstellung (Automatisch, Hell, Dunkel) gilt pro Gerät und liegt im `localStorage`.
+
 ## Lokal starten
 
 ```bash

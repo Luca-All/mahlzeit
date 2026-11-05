@@ -3,8 +3,8 @@ import {
   esc, toISO, fromISO, today, addDays, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
 } from './util.js';
 import {
-  COMBOS, GROUPS, NUTRIENTS, TIPS, dishIngredients, groupsOf, guessForDish, guessIngredients,
-  ingredient, ingredientsOfGroup, isAssumed, summarize,
+  DIETS, GROUPS, NUTRIENTS, TIPS, activeCombos, activeGroups, conflictingIngredients, coreGroups, currentDiet,
+  dishIngredients, groupsOf, guessForDish, guessIngredients, ingredient, ingredientsOfGroup, isAssumed, setDiet, summarize,
 } from './nutrition.js';
 import {
   BONUS, GROUP_RULES, LEVELS, SOURCES, USAGE_RULES, computePoints,
@@ -239,6 +239,7 @@ function render() {
     return;
   }
   document.body.className = `accent-${me().color ?? 0}`;
+  setDiet(S.household.diet);
   S.points = computePoints(S);
   if (S.shownTab !== S.tab) {
     S.shownTab = S.tab;
@@ -426,7 +427,12 @@ function dishIngredientsSection(d) {
     return `<li><i class="food ${isAssumed(d) ? 'assumed' : ''}" aria-hidden="true">${g.badge}</i>
       <span class="row-text"><b>${esc(g.label)}</b><small>${esc(names.join(', '))}</small></span></li>`;
   }).join('');
-  const assumedNote = isAssumed(d) && groups.length
+  const conflicts = conflictingIngredients(d).map((id) => ingredient(id)?.label).filter(Boolean);
+  const conflictNote = conflicts.length
+    ? `<div class="assumed-note"><span>${isAssumed(d) ? 'Vermutlich' : 'Enthält'} ${esc(conflicts.join(', '))}, das zählt bei ${esc(currentDiet().label)} nicht.</span>
+        <button class="btn small" data-action="confirmIngredients" data-id="${esc(d.id)}">Ist nicht drin</button></div>`
+    : '';
+  const assumedNote = isAssumed(d) && groups.length && !conflicts.length
     ? `<div class="assumed-note"><span>Aus dem Namen angenommen.</span>
         <button class="btn small" data-action="confirmIngredients" data-id="${esc(d.id)}">Stimmt so</button></div>`
     : '';
@@ -434,6 +440,7 @@ function dishIngredientsSection(d) {
     <h3>Wichtige Zutaten</h3>
     ${rows ? `<ul class="food-list">${rows}</ul>` : '<p class="muted">Noch keine erkannt. Trag sie über „Bearbeiten“ ein.</p>'}
     ${assumedNote}
+    ${conflictNote}
     ${d.otherIngredients ? `<p class="muted">Außerdem: ${esc(d.otherIngredients)}</p>` : ''}
   </section>`;
 }
@@ -441,7 +448,7 @@ function dishIngredientsSection(d) {
 function ingredientFields(selected, assumed) {
   return `<fieldset class="ingredients ${assumed ? 'assumed' : ''}"><legend>Wichtige Zutaten</legend>
     <p class="ing-hint">Gestrichelt ist angenommen. Antippen zum Ändern.</p>
-    ${GROUPS.map((g) => {
+    ${activeGroups().map((g) => {
       const items = ingredientsOfGroup(g.id);
       const count = items.filter((i) => selected.includes(i.id)).length;
       return `<details data-group="${g.id}" ${count ? 'open' : ''}>
@@ -770,7 +777,7 @@ const lastSevenDays = () => Array.from({ length: 7 }, (_, i) => addDays(today(),
 function renderNutrition() {
   const dates = lastSevenDays();
   const { meals, groupDays, nutrients } = summarize(S.cooked, S.dishes, dates);
-  const core = GROUPS.filter((g) => !g.optional && !g.limit);
+  const core = coreGroups();
   const missing = core.filter((g) => !groupDays.get(g.id).size);
   const head = !meals
     ? '<strong>Noch nichts eingetragen</strong><p>In den letzten 7 Tagen gab es keine gekochten Gerichte.</p>'
@@ -789,17 +796,24 @@ function renderNutrition() {
     </button></li>`;
   };
 
-  const combos = COMBOS.filter((c) => !findDishByName(c.name));
+  const combos = activeCombos().filter((c) => !findDishByName(c.name));
+  const vegan = currentDiet().id === 'vegan';
+  // Vegan lässt sich B12 laut DGE nicht sicher über Essen decken, deshalb hier kein Häkchen.
+  if (vegan) nutrients.delete('B12');
+  const b12Note = vegan
+    ? `<p class="diet-note"><b>B12 nicht vergessen:</b> Laut DGE ist bei veganer Ernährung eine ausreichende Versorgung nur mit einem Präparat möglich, Hefeflocken und angereicherte Produkte reichen nicht sicher. Der Wert sollte regelmäßig ärztlich geprüft werden. <a class="link" href="${SOURCES.B12}" target="_blank" rel="noopener noreferrer">DGE</a></p>`
+    : '';
 
   $('#view').innerHTML = `
     ${topBar('Ernährung')}
     ${levelCard()}
     ${questList()}
     <div class="nutrition-head">${head}</div>
-    <ul class="list">${GROUPS.map(groupRow).join('')}</ul>
+    <ul class="list">${activeGroups().map(groupRow).join('')}</ul>
     <section class="nutrition-section">
       <h3>Nährstoffe in den letzten 7 Tagen</h3>
       <ul class="nutrients">${NUTRIENTS.map((n) => `<li class="${nutrients.has(n) ? 'on' : ''}">${nutrients.has(n) ? '✓ ' : ''}${esc(n)}</li>`).join('')}</ul>
+      ${b12Note}
       <p class="fineprint">Zeigt, was in euren eingetragenen Gerichten vorkommt, nicht wie viel davon. Frühstück und Snacks zählen nur, wenn ihr sie als eigenes Gericht eintragt.</p>
     </section>
     ${combos.length ? `<section class="nutrition-section">
@@ -878,7 +892,8 @@ function openPoints() {
     ['Wunsch erfüllt', USAGE_RULES.fulfil],
     ['Am geplanten Tag gekocht', USAGE_RULES.onTime],
   ];
-  const groupRules = GROUPS.filter((g) => GROUP_RULES[g.id])
+  const hasGroup = (id) => activeGroups().some((g) => g.id === id);
+  const groupRules = activeGroups().filter((g) => GROUP_RULES[g.id])
     .sort((a, b) => GROUP_RULES[b.id].points - GROUP_RULES[a.id].points);
 
   openSheet(`
@@ -907,9 +922,11 @@ function openPoints() {
       <ul class="rule-list">
         <li><span class="reward">+${BONUS.palette}</span><span class="row-text">Volle Palette: alle Bereiche in einer Woche</span></li>
         <li><span class="reward">+${BONUS.streak}</span><span class="row-text">Je 7 Tage in Folge Gemüse oder Obst</span></li>
-        <li><span class="reward">+${BONUS.moderation}</span><span class="row-text"><span>Maßhalte-Medaille: höchstens 2× Fleisch pro Woche</span><small>DGE: höchstens 300 g pro Woche. Zwei Portionen zu 150 g sind eine Schätzung, weil die App keine Mengen kennt. WHO: besser pflanzliches Eiweiß statt rotem Fleisch. ${sourceLinks(['DGE', 'WHO'])}</small></span></li>
+        ${hasGroup('meat') ? `<li><span class="reward">+${BONUS.moderation}</span><span class="row-text"><span>Maßhalte-Medaille: höchstens 2× Fleisch pro Woche</span><small>DGE: höchstens 300 g pro Woche. Zwei Portionen zu 150 g sind eine Schätzung, weil die App keine Mengen kennt. WHO: besser pflanzliches Eiweiß statt rotem Fleisch. ${sourceLinks(['DGE', 'WHO'])}</small></span></li>` : ''}
         <li><span class="reward">+${BONUS.legumes}</span><span class="row-text">Bohnen-Pflicht: Hülsenfrüchte mindestens einmal pro Woche</span></li>
-        <li><span class="reward">+${BONUS.fish}</span><span class="row-text">Angelschein: Fisch mindestens einmal pro Woche</span></li>
+        ${hasGroup('fish')
+    ? `<li><span class="reward">+${BONUS.fish}</span><span class="row-text">Angelschein: Fisch mindestens einmal pro Woche</span></li>`
+    : `<li><span class="reward">+${BONUS.seeds}</span><span class="row-text"><span>Nussknacker: an 3 Tagen pro Woche Nüsse, Samen oder gutes Öl</span><small>DGE: täglich eine kleine Handvoll Nüsse. ${sourceLinks(['DGE'])}</small></span></li>`}
       </ul>
       <p class="fineprint">Die Empfehlungen stammen von WHO, DGE und EU, die Punktzahlen sind eine eigene Gewichtung danach. Minuspunkte gibt es keine. Gezählt wird nur, ob etwas vorkommt, nicht die Menge. Das ersetzt keine Ernährungsberatung.</p>
     </details>
@@ -921,7 +938,7 @@ function openPoints() {
 }
 
 function openLevelUp(level) {
-  const food = ['🥦', '🫘', '🌾', '🍅', '🌰', '🥄', '🐟', '🍊'];
+  const food = ['🥦', '🫘', '🌾', '🍅', '🌰', '🥄', '🍠', '🍊'];
   openSheet(`
     <div class="level-up">
       <div class="confetti" aria-hidden="true">${Array.from({ length: 24 }, (_, i) => `<i style="left:${(i * 37) % 100}%;animation-delay:${(i % 8) * 90}ms">${food[i % food.length]}</i>`).join('')}</div>
@@ -974,6 +991,16 @@ function openSettings() {
         <input name="name" required maxlength="24" value="${esc(me().name)}"></label>
       <button class="btn">Name speichern</button>
     </form>
+    <h3>Ernährungsweise</h3>
+    <fieldset class="segmented two" aria-label="Ernährungsweise für die ganze Küche">
+      ${DIETS.map((d) => `<label class="accent"><input type="radio" name="diet" value="${d.id}" ${currentDiet().id === d.id ? 'checked' : ''}><span>${esc(d.label)}</span></label>`).join('')}
+    </fieldset>
+    <p class="muted setting-hint" id="diet-hint">${esc(currentDiet().hint)}</p>
+    <p class="muted setting-hint">Gilt für euch beide. Die Löffel werden danach neu berechnet, das Level kann also sinken.</p>
+    <h3>Darstellung</h3>
+    <fieldset class="segmented" aria-label="Darstellung auf diesem Gerät">
+      ${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([id, label]) => `<label class="accent"><input type="radio" name="theme" value="${id}" ${currentTheme() === id ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+    </fieldset>
     <h3>Küchen-Code</h3>
     <p class="muted">${friend ? `Du teilst diese Küche mit ${esc(friend.name)}. Mit dem Code kommst du auch auf einem neuen Handy wieder rein, heb ihn also gut auf.` : 'Mit diesem Code kommt die zweite Person dazu.'}</p>
     <p class="code">${esc(formatCode(S.code))}</p>
@@ -984,6 +1011,34 @@ function openSettings() {
       <button class="btn quiet" data-action="closeSheet">Schließen</button>
     </div>
     ${demoNote()}`);
+}
+
+const THEME_KEY = 'mahlzeit.theme';
+const THEME_COLORS = { light: '#F7F3EC', dark: '#14110E' };
+
+function currentTheme() {
+  return document.documentElement.dataset.theme ?? 'auto';
+}
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === 'auto') {
+    delete root.dataset.theme;
+    localStorage.removeItem(THEME_KEY);
+  } else {
+    root.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }
+  syncThemeColor();
+}
+
+// Die Statusleiste soll auch dann passen, wenn die Wahl vom System abweicht.
+function syncThemeColor() {
+  const theme = currentTheme();
+  document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+    const own = meta.media.includes('dark') ? 'dark' : 'light';
+    meta.content = THEME_COLORS[theme === 'auto' ? own : theme];
+  });
 }
 
 function confirmSheet(title, text, label, action, id = '') {
@@ -1097,13 +1152,13 @@ const actions = {
   openDish: ({ id }) => openDish(id),
   newDish: ({ name }) => openDishForm(null, name ?? ''),
   addCombo({ name }) {
-    const { ingredients, note } = COMBOS.find((c) => c.name === name);
+    const { ingredients, note } = activeCombos().find((c) => c.name === name);
     openDishForm(null, name, { ingredients, note });
   },
   openGroup: ({ id }) => openGroup(id),
   openPoints,
   confirmIngredients({ id }) {
-    commit([{ type: 'update', col: 'dishes', id, data: { ingredients: guessForDish(S.dishes.find((d) => d.id === id)) } }]);
+    commit([{ type: 'update', col: 'dishes', id, data: { ingredients: dishIngredients(S.dishes.find((d) => d.id === id)) } }]);
     openDish(id);
     toast('Zutaten bestätigt.');
   },
@@ -1301,6 +1356,11 @@ document.addEventListener('input', (e) => {
     if (target.name !== 'name' || target.form.dataset.touched) return;
     const match = target.form.querySelector(`input[name="emoji"][value="${guessEmoji(target.value)}"]`);
     if (match) match.checked = true;
+  } else if (target.name === 'diet') {
+    store.updateHousehold(S.code, { diet: target.value }).catch(() => toast('Speichern hat nicht geklappt.'));
+    $('#diet-hint', sheet).textContent = DIETS.find((d) => d.id === target.value).hint;
+  } else if (target.name === 'theme') {
+    applyTheme(target.value);
   } else if (target.name === 'emoji') {
     target.form.dataset.touched = '1';
   } else if (target.name === 'ing') {
@@ -1313,6 +1373,7 @@ document.addEventListener('input', (e) => {
 /* ---------- Start ---------- */
 
 async function boot() {
+  syncThemeColor();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js').catch(console.error);
   }

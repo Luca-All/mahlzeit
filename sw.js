@@ -1,5 +1,5 @@
 // App-Shell offline verfügbar machen. Die Daten selbst cached Firestore.
-const CACHE = 'mahlzeit-v3';
+const CACHE = 'mahlzeit-v4';
 const SHELL = [
   './',
   'index.html',
@@ -45,9 +45,10 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Eigene Dateien: erst Netz (damit Updates sofort ankommen), sonst Cache.
+  // no-cache, damit nach einem Update nicht neue und alte Module gemischt laufen.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(request).then((res) => {
+      fetch(request, { cache: 'no-cache' }).then((res) => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(request, copy));
