@@ -482,6 +482,96 @@ legend { padding: 0; margin-bottom: 6px; }
 }
 .emoji-grid input:checked + span { background: var(--card); box-shadow: inset 0 0 0 2px var(--accent); }
 
+/* ---------- Zutaten und Abzeichen ---------- */
+
+.badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.food {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+  background: var(--sunken);
+  font-size: 14px;
+  font-style: normal;
+  line-height: 1;
+}
+.food.assumed { background: transparent; border: 1.5px dashed var(--muted); }
+
+.dish-ingredients { margin-bottom: 14px; }
+#sheet .dish-ingredients h3 { margin-top: 4px; }
+.food-list li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.food-list small { color: var(--muted); font-size: 14px; }
+.assumed-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.assumed-note .btn { flex: none; }
+
+.ing-hint { margin-bottom: 6px; color: var(--muted); font-size: 13px; }
+.ingredients details { border-top: 1px solid var(--line); }
+.ingredients summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ing-count { margin-left: auto; color: var(--accent); font-size: 14px; font-weight: 700; }
+.ing-list { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 10px; }
+.ing input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ing span {
+  display: block;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.ing input:checked + span { border-color: var(--accent); color: var(--accent); }
+.ingredients.assumed .ing input:checked + span { border-style: dashed; }
+.ing input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Ernährung ---------- */
+
+.nutrition-head { margin-bottom: 14px; }
+.nutrition-head strong { font-size: 18px; font-weight: 650; }
+.nutrition-head p { color: var(--muted); font-size: 15px; }
+.group-row { align-items: flex-start; }
+.group-row > .icon { align-self: center; }
+
+.dots { display: flex; gap: 4px; margin-top: 7px; }
+.dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--sunken); }
+.dots i.on { background: var(--accent); }
+
+.nutrition-section { margin-top: 24px; }
+.nutrition-section h3 { margin-bottom: 8px; font-size: 15px; font-weight: 650; color: var(--muted); }
+.nutrients { display: flex; flex-wrap: wrap; gap: 6px; }
+.nutrients li {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.nutrients li.on { background: var(--card); border-color: var(--accent); color: var(--accent); }
+.fineprint { margin-top: 10px; color: var(--muted); font-size: 13px; }
+
+.tips summary { min-height: 44px; display: flex; align-items: center; font-weight: 650; cursor: pointer; }
+.tips ul { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px; }
+.tips li { padding-left: 12px; border-left: 3px solid var(--line); font-size: 15px; }
+
 /* ---------- Hinweis-Toast ---------- */
 
 #toast {

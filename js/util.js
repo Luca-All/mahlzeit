@@ -11,6 +11,11 @@ export const fromISO = (s) => {
   return new Date(y, m - 1, d);
 };
 export const today = () => toISO(new Date());
+export const addDays = (iso, n) => {
+  const d = fromISO(iso);
+  d.setDate(d.getDate() + n);
+  return toISO(d);
+};
 export const daysBetween = (a, b) => Math.round((fromISO(b) - fromISO(a)) / 864e5);
 
 const dayFmt = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -42,9 +47,9 @@ const EMOJI_HINTS = [
   [/curry|dal/, '🍛'],
   [/suppe|eintopf|chili/, '🍲'],
   [/ramen|pho|wok|mie/, '🍜'],
-  [/sushi|bowl/, '🍣'],
+  [/sushi/, '🍣'],
   [/taco|burrito|wrap|quesadilla|fajita/, '🌮'],
-  [/salat/, '🥗'],
+  [/salat|bowl/, '🥗'],
   [/burger/, '🍔'],
   [/ei\b|eier|omelett|shakshuka|frühstück/, '🍳'],
   [/pfannkuchen|pancake|crêpe|crepe|waffel/, '🥞'],

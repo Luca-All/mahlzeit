@@ -14,6 +14,10 @@ Reines HTML/CSS/JS ohne Build-Schritt. Firebase (Firestore und anonyme Anmeldung
 
 Solange `firebaseConfig` in `js/config.js` auf `null` steht, läuft die App im Demo-Modus: Die Daten bleiben dann auf dem Gerät. Mit `?demo` in der URL lässt sich der Demo-Modus auch später erzwingen, ohne echte Daten anzufassen.
 
+## Zutaten und Ernährung
+
+`js/nutrition.js` enthält den Katalog der wichtigen Lebensmittel mit ihren Nährstoffen. Ein Gericht ohne eigene Auswahl bekommt seine Zutaten aus Name, Notiz und weiteren Zutaten angenommen (gestrichelte Abzeichen). Sobald jemand die Auswahl ändert oder bestätigt, gilt sie fest. Der Ernährungs-Tab wertet die gekochten Gerichte der letzten 7 Tage aus. Erfasst wird nur, ob etwas vorkommt, nicht wie viel.
+
 ## Lokal starten
 
 ```bash
@@ -27,6 +31,7 @@ Liegt der Ordner in iCloud Drive, kann Python ihn eventuell nicht lesen. Dann de
 - `js/app.js`: Oberfläche und Abläufe
 - `js/store.js`: Datenschicht mit den Backends Firebase und Demo
 - `js/util.js`: Datum, Escaping, Emoji-Vorschläge
+- `js/nutrition.js`: Zutatenkatalog, Annahmen und Auswertung
 - `sw.js`: Offline-Cache für die App-Dateien
 - `firestore.rules`: Zugriffsregeln
 

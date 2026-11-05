@@ -1,7 +1,11 @@
 import { createStore, newCode, newId, normalizeCode, formatCode } from './store.js';
 import {
-  esc, toISO, fromISO, today, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
+  esc, toISO, fromISO, today, addDays, fmtDay, fmtLong, fmtMonth, fmtRelative, EMOJIS, guessEmoji,
 } from './util.js';
+import {
+  COMBOS, GROUPS, NUTRIENTS, TIPS, dishIngredients, groupsOf, guessForDish, guessIngredients,
+  ingredient, ingredientsOfGroup, isAssumed, summarize,
+} from './nutrition.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -75,6 +79,7 @@ const ICONS = {
   dishes: '<path d="M7 3v7a3 3 0 0 0 3 3v8M4 3v5m6-5v5M17 21v-7h-2.5V8c0-2.8 1.2-5 2.5-5s2 1 2 2v16"/>',
   calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4m8-4v4"/>',
   wishes: '<path d="M12 20.5s-8-4.8-8-10.8A4.7 4.7 0 0 1 12 6.6a4.7 4.7 0 0 1 8 3.1c0 6-8 10.8-8 10.8Z"/>',
+  nutrition: '<path d="M5 19c0-8 5-14 15-15 0 11-5 16-13 15"/><path d="M5 21c1-6 4-9 9-11"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5m0 13V21m9-9h-2.5m-13 0H3m15.4-6.4-1.8 1.8M7.4 16.6l-1.8 1.8m12.8 0-1.8-1.8M7.4 7.4 5.6 5.6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="m15 5-7 7 7 7"/>',
@@ -238,6 +243,7 @@ function render() {
   if (S.tab === 'dishes') updateDishes();
   if (S.tab === 'calendar') renderCalendar();
   if (S.tab === 'wishes') renderWishes();
+  if (S.tab === 'nutrition') renderNutrition();
   renderTabs();
   renderFab();
 }
@@ -249,7 +255,7 @@ function renderTabs() {
       ${icon(id)}<span>${label}</span>
       ${badge ? `<i class="badge" aria-label="${badge} offen">${badge}</i>` : ''}
     </button>`;
-  $('#tabs').innerHTML = tab('dishes', 'Gerichte') + tab('calendar', 'Kalender') + tab('wishes', 'Wünsche', openIn);
+  $('#tabs').innerHTML = tab('dishes', 'Gerichte') + tab('calendar', 'Kalender') + tab('wishes', 'Wünsche', openIn) + tab('nutrition', 'Ernährung');
 }
 
 function renderFab() {
@@ -258,6 +264,7 @@ function renderFab() {
   if (S.tab === 'dishes') html = fab('newDish', 'Gericht');
   if (S.tab === 'calendar' && S.day <= today()) html = fab('newCookForDay', 'Eintragen');
   if (S.tab === 'wishes' && other()) html = fab('newWish', 'Wünschen');
+  if (S.tab === 'nutrition') html = fab('newCook', 'Eintragen');
   $('#fab-slot').innerHTML = html;
 }
 
@@ -315,7 +322,7 @@ function updateDishes() {
     const meta = s.count ? `${s.count}× gekocht · ${fmtRelative(s.last)}` : 'Noch nie gekocht';
     return `<li><button class="row" data-action="openDish" data-id="${esc(d.id)}">
       <span class="tile">${esc(d.emoji)}</span>
-      <span class="row-text"><b>${esc(d.name)}</b><small>${esc(meta)}</small></span>
+      <span class="row-text"><b>${esc(d.name)}</b><small>${esc(meta)}</small>${foodBadges(d)}</span>
       ${icon('next')}
     </button></li>`;
   }).join('');
@@ -336,6 +343,7 @@ function openDish(id) {
       <div><dt>Gekocht</dt><dd>${logs.length}×</dd></div>
       <div><dt>Zuletzt</dt><dd>${logs.length ? esc(fmtRelative(logs[0].date)) : '–'}</dd></div>
     </dl>
+    ${dishIngredientsSection(d)}
     ${d.note ? `<p class="note">${esc(d.note)}</p>` : ''}
     ${safeLink ? `<p><a class="link" href="${esc(safeLink)}" target="_blank" rel="noopener noreferrer">Rezept öffnen</a></p>` : ''}
     <div class="stack">
@@ -352,20 +360,25 @@ function openDish(id) {
     </div>`);
 }
 
-function openDishForm(id, presetName = '') {
+function openDishForm(id, presetName = '', preset = {}) {
   const d = S.dishes.find((x) => x.id === id);
   const name = d?.name ?? presetName;
+  const chosen = d?.ingredients ?? preset.ingredients ?? null;
+  const selected = chosen ?? (d ? guessForDish(d) : guessIngredients(name));
   const current = d?.emoji ?? guessEmoji(name);
   openSheet(`
     <h2>${d ? 'Gericht bearbeiten' : 'Neues Gericht'}</h2>
-    <form class="stack" data-form="dish" data-id="${esc(id ?? '')}" ${d ? 'data-touched="1"' : ''}>
+    <form class="stack" data-form="dish" data-id="${esc(id ?? '')}" ${d ? 'data-touched="1"' : ''} ${chosen ? 'data-ing-touched="1"' : ''}>
       <label class="field"><span>Name</span>
         <input name="name" required maxlength="60" value="${esc(name)}" data-guess-emoji></label>
       <fieldset class="emoji-grid"><legend>Symbol</legend>
         ${EMOJIS.map((e) => `<label><input type="radio" name="emoji" value="${e}" ${e === current ? 'checked' : ''}><span>${e}</span></label>`).join('')}
       </fieldset>
       <label class="field"><span>Notiz (optional)</span>
-        <textarea name="note" rows="3" maxlength="1000" placeholder="Zutaten, Tricks, was beim letzten Mal besser ging">${esc(d?.note)}</textarea></label>
+        <textarea name="note" rows="3" maxlength="1000" placeholder="Tricks, was beim letzten Mal besser ging">${esc(d?.note ?? preset.note)}</textarea></label>
+      ${ingredientFields(selected, !chosen)}
+      <label class="field"><span>Weitere Zutaten (optional)</span>
+        <input name="otherIngredients" maxlength="300" placeholder="Hackfleisch, Tomaten, Basilikum" value="${esc(d?.otherIngredients)}"></label>
       <label class="field"><span>Rezept-Link (optional)</span>
         <input name="link" type="url" inputmode="url" placeholder="https://" value="${esc(d?.link)}"></label>
       <p class="error" id="dish-error" hidden></p>
@@ -373,6 +386,71 @@ function openDishForm(id, presetName = '') {
       ${d ? `<button class="btn danger" type="button" data-action="confirmDeleteDish" data-id="${esc(d.id)}">Gericht löschen</button>` : ''}
       <button class="btn quiet" type="button" data-action="closeSheet">Abbrechen</button>
     </form>`);
+}
+
+/* ---------- Zutaten und Abzeichen ---------- */
+
+function foodBadges(dish) {
+  const groups = groupsOf(dishIngredients(dish));
+  if (!groups.length) return '';
+  const assumed = isAssumed(dish);
+  return `<span class="badges">${groups.map((g) => {
+    const label = `${g.label}${assumed ? ' (angenommen)' : ''}`;
+    return `<i class="food ${assumed ? 'assumed' : ''}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${g.badge}</i>`;
+  }).join('')}</span>`;
+}
+
+function dishIngredientsSection(d) {
+  const ids = dishIngredients(d);
+  const groups = groupsOf(ids);
+  const rows = groups.map((g) => {
+    const names = ids.map(ingredient).filter((i) => i?.group === g.id).map((i) => i.label);
+    return `<li><i class="food ${isAssumed(d) ? 'assumed' : ''}" aria-hidden="true">${g.badge}</i>
+      <span class="row-text"><b>${esc(g.label)}</b><small>${esc(names.join(', '))}</small></span></li>`;
+  }).join('');
+  const assumedNote = isAssumed(d) && groups.length
+    ? `<div class="assumed-note"><span>Aus dem Namen angenommen.</span>
+        <button class="btn small" data-action="confirmIngredients" data-id="${esc(d.id)}">Stimmt so</button></div>`
+    : '';
+  return `<section class="dish-ingredients">
+    <h3>Wichtige Zutaten</h3>
+    ${rows ? `<ul class="food-list">${rows}</ul>` : '<p class="muted">Noch keine erkannt. Trag sie über „Bearbeiten“ ein.</p>'}
+    ${assumedNote}
+    ${d.otherIngredients ? `<p class="muted">Außerdem: ${esc(d.otherIngredients)}</p>` : ''}
+  </section>`;
+}
+
+function ingredientFields(selected, assumed) {
+  return `<fieldset class="ingredients ${assumed ? 'assumed' : ''}"><legend>Wichtige Zutaten</legend>
+    <p class="ing-hint">Gestrichelt ist angenommen. Antippen zum Ändern.</p>
+    ${GROUPS.map((g) => {
+      const items = ingredientsOfGroup(g.id);
+      const count = items.filter((i) => selected.includes(i.id)).length;
+      return `<details data-group="${g.id}" ${count ? 'open' : ''}>
+        <summary>${g.badge} ${esc(g.label)} <small class="ing-count">${count || ''}</small></summary>
+        <div class="ing-list">${items.map((i) => `<label class="ing"><input type="checkbox" name="ing" value="${i.id}" ${selected.includes(i.id) ? 'checked' : ''}><span>${esc(i.label)}</span></label>`).join('')}</div>
+      </details>`;
+    }).join('')}
+  </fieldset>`;
+}
+
+function refreshIngredientCounts(form) {
+  form.querySelectorAll('details[data-group]').forEach((el) => {
+    const count = el.querySelectorAll('input:checked').length;
+    el.querySelector('.ing-count').textContent = count || '';
+    if (count) el.open = true;
+  });
+}
+
+// Solange niemand selbst gewählt hat, folgt die Auswahl dem, was in Name und Notiz steht.
+function syncAssumedIngredients(form) {
+  if (form.dataset.ingTouched) return;
+  const f = new FormData(form);
+  const guessed = guessIngredients(`${f.get('name')} ${f.get('note')} ${f.get('otherIngredients')}`);
+  form.querySelectorAll('input[name="ing"]').forEach((input) => {
+    input.checked = guessed.includes(input.value);
+  });
+  refreshIngredientCounts(form);
 }
 
 /* ---------- Gericht-Auswahl (Eintragen und Wünschen) ---------- */
@@ -520,7 +598,8 @@ function renderCalendar() {
     ...dayCooked.map((c) => `<li class="entry">
       <span class="tile">${esc(c.dishEmoji)}</span>
       <span class="row-text"><b>${esc(S.dishes.find((d) => d.id === c.dishId)?.name ?? c.dishName)}</b>
-        <small><span class="person ${personClass(c.by)}">${esc(personName(c.by))}</span>${c.note ? ` · ${esc(c.note)}` : ''}</small></span>
+        <small><span class="person ${personClass(c.by)}">${esc(personName(c.by))}</span>${c.note ? ` · ${esc(c.note)}` : ''}</small>
+        ${foodBadges(S.dishes.find((d) => d.id === c.dishId) ?? { name: c.dishName })}</span>
       <button class="btn quiet small" data-action="confirmDeleteCook" data-id="${esc(c.id)}">Löschen</button>
     </li>`),
     ...dayPlanned.map((w) => `<li class="entry">
@@ -666,6 +745,80 @@ function openPlanForm(id) {
     </form>`);
 }
 
+/* ---------- Ernährung ---------- */
+
+const lastSevenDays = () => Array.from({ length: 7 }, (_, i) => addDays(today(), i - 6));
+
+function renderNutrition() {
+  const dates = lastSevenDays();
+  const { meals, groupDays, nutrients } = summarize(S.cooked, S.dishes, dates);
+  const core = GROUPS.filter((g) => !g.optional);
+  const missing = core.filter((g) => !groupDays.get(g.id).size);
+  const head = !meals
+    ? '<strong>Noch nichts eingetragen</strong><p>In den letzten 7 Tagen gab es keine gekochten Gerichte.</p>'
+    : `<strong>${core.length - missing.length} von ${core.length} Bereichen dabei</strong>
+       <p>${meals} ${meals === 1 ? 'Mahlzeit' : 'Mahlzeiten'} in den letzten 7 Tagen.${missing.length ? ` Noch offen: ${esc(missing.map((g) => g.label).join(', '))}.` : ''}</p>`;
+
+  const groupRow = (g) => {
+    const days = groupDays.get(g.id);
+    const dots = dates.map((d) => `<i class="${days.has(d) ? 'on' : ''}"></i>`).join('');
+    const count = days.size ? `${days.size} von 7 Tagen` : 'Nicht dabei';
+    return `<li><button class="row group-row" data-action="openGroup" data-id="${g.id}">
+      <span class="tile">${g.badge}</span>
+      <span class="row-text"><b>${esc(g.label)}</b><small>${esc(count)} · ${esc(g.goal)}</small>
+        <span class="dots" aria-hidden="true">${dots}</span></span>
+      ${icon('next')}
+    </button></li>`;
+  };
+
+  const combos = COMBOS.filter((c) => !findDishByName(c.name));
+
+  $('#view').innerHTML = `
+    ${topBar('Ernährung')}
+    <div class="nutrition-head">${head}</div>
+    <ul class="list">${GROUPS.map(groupRow).join('')}</ul>
+    <section class="nutrition-section">
+      <h3>Nährstoffe in den letzten 7 Tagen</h3>
+      <ul class="nutrients">${NUTRIENTS.map((n) => `<li class="${nutrients.has(n) ? 'on' : ''}">${nutrients.has(n) ? '✓ ' : ''}${esc(n)}</li>`).join('')}</ul>
+      <p class="fineprint">Zeigt, was in euren eingetragenen Gerichten vorkommt, nicht wie viel davon. Frühstück und Snacks zählen nur, wenn ihr sie als eigenes Gericht eintragt.</p>
+    </section>
+    ${combos.length ? `<section class="nutrition-section">
+      <h3>Einfache Kombis</h3>
+      <ul class="list">${combos.map((c) => `<li><button class="row" data-action="addCombo" data-name="${esc(c.name)}">
+        <span class="tile">${esc(guessEmoji(c.name))}</span>
+        <span class="row-text"><b>${esc(c.name)}</b>${foodBadges(c)}</span>
+        ${icon('plus')}
+      </button></li>`).join('')}</ul>
+    </section>` : ''}
+    <section class="nutrition-section">
+      <details class="tips"><summary>Tipps zur Zubereitung</summary>
+        <ul>${TIPS.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+      </details>
+    </section>`;
+}
+
+function openGroup(id) {
+  const group = GROUPS.find((g) => g.id === id);
+  const stats = dishStats();
+  const matching = S.dishes
+    .filter((d) => dishIngredients(d).some((i) => ingredient(i)?.group === id))
+    .sort((a, b) => (stats.get(a.id)?.last ?? '').localeCompare(stats.get(b.id)?.last ?? ''));
+  openSheet(`
+    <div class="sheet-head"><span class="tile big">${group.badge}</span><h2>${esc(group.label)}</h2></div>
+    <h3>Eure Gerichte damit</h3>
+    ${matching.length ? `<ul class="list">${matching.map((d) => {
+      const last = stats.get(d.id)?.last;
+      return `<li><button class="row" data-action="openDish" data-id="${esc(d.id)}">
+        <span class="tile">${esc(d.emoji)}</span>
+        <span class="row-text"><b>${esc(d.name)}</b><small>${last ? esc(`Zuletzt ${fmtRelative(last)}`) : 'Noch nie gekocht'}</small></span>
+        ${icon('next')}
+      </button></li>`;
+    }).join('')}</ul>` : '<p class="muted">Noch keins. Leg eins an oder ergänze die Zutaten bei einem Gericht.</p>'}
+    <h3>Das zählt dazu</h3>
+    <ul class="history">${ingredientsOfGroup(id).map((i) => `<li><span>${esc(i.label)}</span><small class="muted">${esc(i.nutrients.join(', '))}</small></li>`).join('')}</ul>
+    <div class="sheet-foot"><button class="btn quiet" data-action="closeSheet">Schließen</button></div>`);
+}
+
 /* ---------- Einstellungen und Bestätigungen ---------- */
 
 function openSettings() {
@@ -799,6 +952,16 @@ const actions = {
   },
   openDish: ({ id }) => openDish(id),
   newDish: ({ name }) => openDishForm(null, name ?? ''),
+  addCombo({ name }) {
+    const { ingredients, note } = COMBOS.find((c) => c.name === name);
+    openDishForm(null, name, { ingredients, note });
+  },
+  openGroup: ({ id }) => openGroup(id),
+  confirmIngredients({ id }) {
+    commit([{ type: 'update', col: 'dishes', id, data: { ingredients: guessForDish(S.dishes.find((d) => d.id === id)) } }]);
+    openDish(id);
+    toast('Zutaten bestätigt.');
+  },
   editDish: ({ id }) => openDishForm(id),
   confirmDeleteDish: ({ id }) => confirmSheet(
     'Gericht löschen?',
@@ -933,7 +1096,14 @@ const forms = {
       error.hidden = false;
       return;
     }
-    const data = { name, emoji: f.get('emoji') ?? '🍽️', note: f.get('note').trim(), link: f.get('link').trim() };
+    const otherIngredients = f.get('otherIngredients').trim();
+    // null heißt: weiter annehmen. Was bei "Weitere Zutaten" steht, zählt auch bei eigener Auswahl.
+    const ingredients = form.dataset.ingTouched
+      ? [...new Set([...f.getAll('ing'), ...guessIngredients(otherIngredients)])]
+      : null;
+    const data = {
+      name, emoji: f.get('emoji') ?? '🍽️', note: f.get('note').trim(), link: f.get('link').trim(), otherIngredients, ingredients,
+    };
     if (id) commit([{ type: 'update', col: 'dishes', id, data }]);
     else commit([{ type: 'set', col: 'dishes', id: newId(), data: { ...data, createdBy: S.meId, createdAt: Date.now() } }]);
     sheet.close();
@@ -980,14 +1150,18 @@ document.addEventListener('input', (e) => {
     updateDishes();
   } else if (target.matches('[data-dish-picker]')) {
     $('#dish-suggest', sheet).innerHTML = dishSuggestions(target.value);
-  } else if (target.matches('[data-guess-emoji]')) {
+  } else if (target.form?.dataset.form === 'dish' && ['name', 'note', 'otherIngredients'].includes(target.name)) {
+    syncAssumedIngredients(target.form);
     // Symbol mitraten, bis jemand selbst eins ausgewählt hat.
-    const form = target.form;
-    if (form.dataset.touched) return;
-    const match = form.querySelector(`input[name="emoji"][value="${guessEmoji(target.value)}"]`);
+    if (target.name !== 'name' || target.form.dataset.touched) return;
+    const match = target.form.querySelector(`input[name="emoji"][value="${guessEmoji(target.value)}"]`);
     if (match) match.checked = true;
   } else if (target.name === 'emoji') {
     target.form.dataset.touched = '1';
+  } else if (target.name === 'ing') {
+    target.form.dataset.ingTouched = '1';
+    target.closest('fieldset').classList.remove('assumed');
+    refreshIngredientCounts(target.form);
   }
 });
 
