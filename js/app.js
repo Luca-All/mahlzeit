@@ -139,7 +139,7 @@ const ICONS = {
   wishes: '<path d="M12 20.5s-8-4.8-8-10.8A4.7 4.7 0 0 1 12 6.6a4.7 4.7 0 0 1 8 3.1c0 6-8 10.8-8 10.8Z"/>',
   nutrition: '<path d="M5 19c0-8 5-14 15-15 0 11-5 16-13 15"/><path d="M5 21c1-6 4-9 9-11"/>',
   dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r=".6"/><circle cx="15" cy="15" r=".6"/><circle cx="15" cy="9" r=".6"/><circle cx="9" cy="15" r=".6"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5m0 13V21m9-9h-2.5m-13 0H3m15.4-6.4-1.8 1.8M7.4 16.6l-1.8 1.8m12.8 0-1.8-1.8M7.4 7.4 5.6 5.6"/>',
+  gear: '<path d="M10.3 3.2a1.7 1.7 0 0 1 3.4 0l.2 1.1a7.6 7.6 0 0 1 1.9.8l.9-.7a1.7 1.7 0 0 1 2.4 2.4l-.7.9c.4.6.6 1.2.8 1.9l1.1.2a1.7 1.7 0 0 1 0 3.4l-1.1.2a7.6 7.6 0 0 1-.8 1.9l.7.9a1.7 1.7 0 0 1-2.4 2.4l-.9-.7a7.6 7.6 0 0 1-1.9.8l-.2 1.1a1.7 1.7 0 0 1-3.4 0l-.2-1.1a7.6 7.6 0 0 1-1.9-.8l-.9.7a1.7 1.7 0 0 1-2.4-2.4l.7-.9a7.6 7.6 0 0 1-.8-1.9l-1.1-.2a1.7 1.7 0 0 1 0-3.4l1.1-.2c.2-.7.4-1.3.8-1.9l-.7-.9a1.7 1.7 0 0 1 2.4-2.4l.9.7a7.6 7.6 0 0 1 1.9-.8Z"/><circle cx="12" cy="12" r="3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="m15 5-7 7 7 7"/>',
   next: '<path d="m9 5 7 7-7 7"/>',
@@ -316,6 +316,9 @@ function render() {
   notePointsChange();
 }
 
+const TABS = ['dishes', 'calendar', 'wishes', 'nutrition'];
+let lensIndex = 0;
+
 function renderTabs() {
   const openIn = S.wishes.filter((w) => w.to === S.meId && w.status === 'open').length;
   const tab = (id, label, badge = 0) => `
@@ -323,7 +326,16 @@ function renderTabs() {
       ${icon(id)}<span>${label}</span>
       ${badge ? `<i class="badge" aria-label="${badge} offen">${badge}</i>` : ''}
     </button>`;
-  $('#tabs').innerHTML = tab('dishes', 'Gerichte') + tab('calendar', 'Kalender') + tab('wishes', 'Wünsche', openIn) + tab('nutrition', 'Ernährung');
+  const nav = $('#tabs');
+  // Beim Tabwechsel wird die Leiste neu gebaut. Die Linse startet am alten Tab und gleitet zum neuen.
+  if (!nav.querySelector('.tab-items')) {
+    nav.innerHTML = `<div class="tab-items"><span class="tab-lens" aria-hidden="true" style="--i: ${lensIndex}"></span><div id="tab-buttons" style="display: contents"></div></div>`;
+  }
+  $('#tab-buttons').innerHTML = tab('dishes', 'Gerichte') + tab('calendar', 'Kalender') + tab('wishes', 'Wünsche', openIn) + tab('nutrition', 'Ernährung');
+  const lens = nav.querySelector('.tab-lens');
+  lensIndex = TABS.indexOf(S.tab);
+  lens.getBoundingClientRect();
+  lens.style.setProperty('--i', lensIndex);
 }
 
 function renderFab() {
